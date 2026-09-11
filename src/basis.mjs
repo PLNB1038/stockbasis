@@ -1,0 +1,108 @@
+// FIFO cost basis.
+
+/**
+ * @typedef {Object} Trade
+ * @property {"buy"|"sell"} side
+ * @property {number} qty        // units of the stock token
+ * @property {number} valueUsd   // cash value of the whole trade (stablecoin leg)
+ * @property {number} ts         // unix seconds
+ */
+
+/**
+ * @typedef {Object} BasisResult
+ * @property {number} realizedUsd     // total realized P&L (known-basis disposals only)
+ * @property {number} realizedBuyUsd  // cost of lots consumed by sells
+ * @property {Array<{acquiredTs:number, soldTs:number, qty:number, costUsd:number, proceedsUsd:number, pnlUsd:number}>} closes
+ * @property {Array<{soldTs:number, qty:number, proceedsUsd:number}>} unknownBasis
+ * @property {Array<{qty:number, costUsd:number, ts:number}>} openLots
+ * @property {number} openQty
+ * @property {number} openCostUsd
+ */
+
+/**
+ * Compute FIFO cost basis over a chronologically sorted list of trades.
+ * @param {Trade[]} trades oldest-first
+ * @returns {BasisResult}
+ */
+export function fifoBasis(trades) {
+  const sorted = [...trades].sort((a, b) => a.ts - b.ts);
+  /** @type {Array<{qty:number, costUsd:number, ts:number}>} */
+  const lots = [];
+  /** @type {BasisResult["closes"]} */
+  const closes = [];
+  /** @type {Array<{ts:number, qty:number, proceedsUsd:number}>} */
+  const unknownBasis = [];
+  let realizedUsd = 0;
+  let realizedBuyUsd = 0;
+
+  for (const t of sorted) {
+    if (t.side === "buy") {
+      lots.push({ qty: t.qty, costUsd: t.valueUsd, ts: t.ts });
+      continue;
+    }
+
+    // sell: consume lots oldest-first, one close row per lot consumed
+    // (brokerage 1099-B style: each disposal names its acquisition date)
+    let need = t.qty;
+    const perUnit = t.valueUsd / t.qty;
+    while (need > 1e-9 && lots.length) {
+      const lot = lots[0];
+      const take = Math.min(lot.qty, need);
+      const cost = (take / lot.qty) * lot.costUsd;
+      const proceeds = take * perUnit;
+      realizedUsd += proceeds - cost;
+      realizedBuyUsd += cost;
+      closes.push({ acquiredTs: lot.ts, soldTs: t.ts, qty: take, costUsd: cost, proceedsUsd: proceeds, pnlUsd: proceeds - cost });
+      lot.qty -= take;
+      lot.costUsd -= cost;
+      need -= take;
+      if (lot.qty <= 1e-9) lots.shift();
+    }
+
+    // shares sold without known lots (acquired before the scanned window) have
+    // unknown basis — their proceeds are NOT profit, so they stay out of P&L
+    if (need > 1e-9) {
+      unknownBasis.push({ soldTs: t.ts, qty: need, proceedsUsd: need * perUnit });
+    }
+  }
+
+  const openQty = lots.reduce((s, l) => s + l.qty, 0);
+  const openCostUsd = lots.reduce((s, l) => s + l.costUsd, 0);
+  return { realizedUsd, realizedBuyUsd, closes, unknownBasis, openLots: lots, openQty, openCostUsd };
+}
+
+/**
+ * Roll up per-stock summary.
+ * @param {Map<string, Trade[]>} tradesByMint
+ * @param {(mint: string) => {symbol: string, name: string} | undefined} meta
+ * @returns {Array<object>} one row per stock token
+ */
+export function perStockSummary(tradesByMint, meta) {
+  const rows = [];
+  for (const [mint, trades] of tradesByMint) {
+    const b = fifoBasis(trades);
+    const m = meta(mint) ?? { symbol: mint.slice(0, 6), name: "unknown" };
+    const wins = b.closes.filter((c) => c.pnlUsd > 0).length;
+    const losses = b.closes.filter((c) => c.pnlUsd <= 0).length;
+    rows.push({
+      mint,
+      symbol: m.symbol,
+      name: m.name,
+      trades: trades.length,
+      buys: trades.filter((t) => t.side === "buy").length,
+      sells: trades.filter((t) => t.side === "sell").length,
+      wins,
+      losses,
+      unknownBasis: b.unknownBasis.length,
+      closes: b.closes,
+      realizedUsd: round(b.realizedUsd, 2),
+      openQty: round(b.openQty, 6),
+      openCostUsd: round(b.openCostUsd, 2),
+      firstTs: trades.length ? Math.min(...trades.map((t) => t.ts)) : undefined,
+      lastTs: trades.length ? Math.max(...trades.map((t) => t.ts)) : undefined,
+    });
+  }
+  return rows.sort((a, b) => Math.abs(b.realizedUsd) - Math.abs(a.realizedUsd));
+}
+
+const round = (x, d) => Math.round(x * 10 ** d) / 10 ** d;

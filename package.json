@@ -1,0 +1,19 @@
+{
+  "name": "stockbasis",
+  "version": "0.1.0",
+  "description": "Cost basis, P&L and tax-ready reports for tokenized equities on Solana",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/cli.mjs",
+    "serve": "node src/server.mjs",
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PLNB1038/stockbasis"
+  }
+}

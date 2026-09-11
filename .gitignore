@@ -1,0 +1,22 @@
+# Node
+node_modules/
+dist/
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Data & secrets
+*.sqlite
+*.db
+secrets/
+*.key
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
