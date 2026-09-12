@@ -83,7 +83,7 @@ async function poll(id, seq) {
     $("progress-text").textContent = job.phase === "history"
       ? `Walking transaction history… ${job.progress} signatures`
       : `Scanned ${job.progress} transactions · ${job.trades} stock trades found`;
-    $("bar-fill").style.width = `${Math.min(95, 8 + (job.trades / 30) * 87)}%`;
+    $("bar-fill").style.width = `${Math.min(95, 8 + (job.trades / (job.target ?? 30)) * 87)}%`;
     await new Promise((r) => setTimeout(r, 1200));
   }
 }

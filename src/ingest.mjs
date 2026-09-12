@@ -193,6 +193,8 @@ export function tokenDeltas(meta, owner) {
  * Exported for fixture regression tests.
  * @returns {Promise<void>}
  */
+const MIN_SOL_LEG = Number(process.env.MIN_SOL_LEG ?? 0.01); // SOL: below this a delta is rent/fee dust, not a cash leg
+
 export async function pairTrades(deltas, ctx, trades, transfers) {
   // net movements per mint first — dust in a second token account of the same
   // mint must not become a second "trade"; fully-cancelled mints drop out
@@ -220,15 +222,6 @@ export async function pairTrades(deltas, ctx, trades, transfers) {
     .filter(([mint]) => metas.get(mint)?.isStock)
     .map(([mint, delta]) => ({ mint, delta }));
 
-  const needsSolPrice = cash.some((c) => c.mint === WSOL) || Math.abs(ctx.solDelta ?? 0) > 1e-9;
-  const solPrice = needsSolPrice ? await solUsdOn(ctx.ts) : 1;
-  if (needsSolPrice && !Number.isFinite(solPrice)) {
-    // no price source available: a movement without a value, never a $1 guess
-    for (const e of equity) transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
-    return;
-  }
-  const cashUsd = (c) => (c.mint === WSOL ? Math.abs(c.delta) * solPrice : Math.abs(c.delta));
-
   // a multi-stock bundle cannot be decomposed from deltas alone — no greedy
   // guessing which cash leg paid for which share: record all as movements
   if (equity.length > 1) {
@@ -236,24 +229,40 @@ export async function pairTrades(deltas, ctx, trades, transfers) {
     return;
   }
 
+  // SOL price is fetched lazily — only when a SOL-denominated leg is real.
+  // Routine rent/fee SOL deltas must not depend on price-API availability.
+  let solPrice = null;
+  const ensureSolPrice = async () => {
+    if (solPrice == null) solPrice = await solUsdOn(ctx.ts);
+    return solPrice;
+  };
+
   for (const e of equity) {
     // every opposite-sign cash leg of the same tx participates in the trade
     const legs = cash.filter((c) => Math.sign(c.delta) !== Math.sign(e.delta));
+    if (legs.some((c) => c.mint === WSOL) && solPrice == null) {
+      solPrice = await ensureSolPrice();
+    }
     if (!legs.length) {
       // most "missing" cash legs are wrapped SOL created and burned inside the
-      // same transaction: the wallet's SOL balance shows the money moving
+      // same transaction: the wallet's SOL balance shows the money moving.
+      // Rent reclaims and fee dust sit below the leg floor — a gift plus a
+      // closed empty ATA must not book a micro-"sale".
       const sol = ctx.solDelta ?? 0;
-      if (sol !== 0 && Math.sign(sol) !== Math.sign(e.delta)) {
-        trades.push({
-          side: e.delta > 0 ? "buy" : "sell",
-          mint: e.mint,
-          qty: Math.abs(e.delta),
-          valueUsd: (Math.abs(sol) / 1e9) * solPrice,
-          ts: ctx.ts,
-          slot: ctx.slot,
-          signature: ctx.signature,
-        });
-        continue;
+      if (sol !== 0 && Math.sign(sol) !== Math.sign(e.delta) && Math.abs(sol) >= MIN_SOL_LEG * 1e9) {
+        const price = await ensureSolPrice();
+        if (Number.isFinite(price)) {
+          trades.push({
+            side: e.delta > 0 ? "buy" : "sell",
+            mint: e.mint,
+            qty: Math.abs(e.delta),
+            valueUsd: (Math.abs(sol) / 1e9) * price,
+            ts: ctx.ts,
+            slot: ctx.slot,
+            signature: ctx.signature,
+          });
+          continue;
+        }
       }
       // no cash involved: a withdrawal/deposit moves basis with the tokens.
       // Outgoing stock consumes open lots (no P&L); incoming creates none.
@@ -268,7 +277,21 @@ export async function pairTrades(deltas, ctx, trades, transfers) {
       });
       continue;
     }
-    const valueUsd = legs.reduce((s, c) => s + cashUsd(c), 0);
+    // stablecoin legs are self-priced; WSOL legs need the SOL price
+    let valueUsd = 0;
+    let priced = true;
+    for (const c of legs) {
+      if (c.mint === WSOL) {
+        if (!Number.isFinite(solPrice)) priced = false;
+        else valueUsd += Math.abs(c.delta) * solPrice;
+      } else valueUsd += Math.abs(c.delta);
+    }
+    if (!priced) {
+      // no price source for the WSOL leg: a movement without a value, never a guess
+      for (const c of legs) cash.splice(cash.indexOf(c), 1);
+      transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
+      continue;
+    }
     for (const c of legs) cash.splice(cash.indexOf(c), 1); // consumed
     trades.push({
       side: e.delta > 0 ? "buy" : "sell",
@@ -276,6 +299,7 @@ export async function pairTrades(deltas, ctx, trades, transfers) {
       qty: Math.abs(e.delta),
       valueUsd,
       ts: ctx.ts,
+      slot: ctx.slot,
       signature: ctx.signature,
     });
   }

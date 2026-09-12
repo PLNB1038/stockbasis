@@ -43,8 +43,8 @@ async function precomputeFeatured() {
     try {
       // landing-page wallets get the deep scan: no UI is waiting on them,
       // and full history means real cost basis instead of "unknown" rows
-      const { trades, coverage, ambiguous } = await ingestWallet(address, { maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900 });
-      precomputed.set(address, { ...(await buildReport(trades)), coverage, ambiguous });
+      const { trades, coverage, ambiguous, transfers: tfs } = await ingestWallet(address, { maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900 });
+      precomputed.set(address, { ...(await buildReport(trades)), coverage, ambiguous, transfersCount: tfs.length });
     } catch (e) {
       console.error(`[stockbasis] precompute ${address.slice(0, 8)} failed: ${String(e?.message ?? e).slice(0, 80)}`);
     }
@@ -87,8 +87,8 @@ function startJob(address) {
     onWalk: (n) => { job.progress = n; job.phase = "history"; },
     onProgress: (p) => { job.progress = p.scanned; job.trades = p.trades; job.phase = "scan"; },
   })
-    .then(async ({ trades, coverage, ambiguous }) => {
-      job.result = { ...(await buildReport(trades)), coverage, ambiguous };
+    .then(async ({ trades, coverage, ambiguous, transfers: tfs }) => {
+      job.result = { ...(await buildReport(trades)), coverage, ambiguous, transfersCount: tfs.length };
       job.status = "done";
       job.finished = Date.now();
     })
@@ -130,9 +130,10 @@ const server = http.createServer(async (req, res) => {
     let address;
     try { address = JSON.parse(body).address; } catch { /* handled below */ }
     if (!ADDRESS_RE.test(address ?? "")) return json(res, 400, { error: "valid Solana address required" });
-    if (jobs.size > 20) return json(res, 503, { error: "server busy, try again shortly" });
+    const runningNow = [...jobs.values()].filter((j) => j.status === "running").length;
+    if (runningNow >= 20) return json(res, 503, { error: "server busy, try again shortly" });
     const job = startJob(address);
-    return json(res, 202, { id: job.id });
+    return json(res, 202, { id: job.id, target: TARGET_TRADES });
   }
 
   const jobMatch = url.pathname.match(/^\/api\/jobs\/([\w-]+)$/);
@@ -140,7 +141,7 @@ const server = http.createServer(async (req, res) => {
     const job = jobs.get(jobMatch[1]);
     if (!job) return json(res, 404, { error: "no such job" });
     const { id, address, status, progress, trades, phase, error, result } = job;
-    return json(res, 200, { id, address, status, progress, trades, phase, error, result });
+    return json(res, 200, { id, address, status, progress, trades, phase, target: TARGET_TRADES, error, result });
   }
 
   if (req.method === "GET" && url.pathname === "/api/featured") {
@@ -193,7 +194,7 @@ async function marketStats() {
   const out = { volume24hUsd: 0, trackedTokens: mints.length, tokensWithPools: 0, top: [] };
 
   try {
-    const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(",")}`);
+    const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(",")}`, { signal: AbortSignal.timeout(8000) });
     if (res.ok) {
       const pairs = await res.json();
       const bestPerMint = new Map();
