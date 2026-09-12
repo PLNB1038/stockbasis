@@ -47,7 +47,7 @@ export function fifoBasis(trades) {
   // custody deposits. Deposits-first is the conservative reading: when the
   // chain cannot say which shares were sold, profit is not invented.
   const consumeOldest = (need, perUnit, t) => {
-    while (need > 1e-9) {
+    while (need >= 1e-9) {
       const lot = lots[0];
       const unk = unknownQ[0];
       const lotTs = lot ? lot.ts : Infinity;
@@ -90,7 +90,7 @@ export function fifoBasis(trades) {
     // inventory is older, no proceeds, no P&L (a movement, not a disposal)
     if (t.side === "out") {
       let need = t.qty;
-      while (need > 1e-9) {
+      while (need >= 1e-9) {
         const lot = lots[0];
         const unk = unknownQ[0];
         const lotTs = lot ? lot.ts : Infinity;
@@ -118,10 +118,11 @@ export function fifoBasis(trades) {
     }
 
     // sell: consume inventory oldest-first (known lots book closes, custody
-    // deposits book unknown-basis disposals)
+    // deposits book unknown-basis disposals). Dust below 1e-9 units is
+    // physically impossible for real tokens (min unit = 10^-decimals ≥ 1e-8).
     if (!(t.qty > 0) || !Number.isFinite(t.valueUsd)) continue; // degenerate, never book NaN
     const need = consumeOldest(t.qty, t.valueUsd / t.qty, t);
-    if (need > 1e-9) {
+    if (need >= 1e-9) {
       const proceeds = need * (t.valueUsd / t.qty);
       unknownBasis.push({ soldTs: t.ts, qty: need, proceedsUsd: proceeds });
       if (Number.isFinite(t.marketPx) && t.marketPx > 0) {

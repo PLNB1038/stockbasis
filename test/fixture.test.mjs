@@ -19,12 +19,16 @@ function asTx(fx) {
   return { meta: fx.meta, transaction: { message: { accountKeys: fx.accountKeys } } };
 }
 
-// deterministic SOL pricing for the fixture days (real mainnet price at capture)
-primeSolDayCache(1700000000, 102.39440297526501);
-primeSolDayCache(1700100000, 102.39440297526501);
+// deterministic SOL pricing: seed each fixture's REAL on-chain day with the
+// SOL price at capture time (~$102 on 2026-09-11/12) — tests stay offline
+const SOL_FIXTURE_PRICE = 102.39440297526501;
+function primeFixtureDay(fx) {
+  primeSolDayCache(fx.blockTime, SOL_FIXTURE_PRICE);
+}
 
 test("fixture usdc: NVDAx buy priced from SOL delta, fee excluded", async () => {
   const fx = load("usdc-5WsaLeLGPN.json");
+  primeFixtureDay(fx);
   const tx = asTx(fx);
   const deltas = tokenDeltas(fx.meta, fx.owner);
   const eq = deltas.find((d) => d.mint === "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh");
@@ -46,6 +50,7 @@ test("fixture usdc: NVDAx buy priced from SOL delta, fee excluded", async () => 
 
 test("fixture sol: SPYx sell paired against incoming SOL", async () => {
   const fx = load("sol-2fd5G7smWC.json");
+  primeFixtureDay(fx);
   const tx = asTx(fx);
   const deltas = tokenDeltas(fx.meta, fx.owner);
   const eq = deltas.find((d) => d.mint === "XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W");
@@ -62,6 +67,7 @@ test("fixture sol: SPYx sell paired against incoming SOL", async () => {
 
 test("fixture out: withdrawal consumes lots and books no P&L", async () => {
   const fx = load("out-4MkgV2e9xY.json");
+  primeFixtureDay(fx);
   const deltas = tokenDeltas(fx.meta, fx.owner);
   // two movements: an unrelated 31.4M token (ignored) and the ANTHROPIC withdrawal
   const eq = deltas.find((d) => d.mint === "Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw");

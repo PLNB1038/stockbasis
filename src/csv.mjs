@@ -13,8 +13,9 @@ export function toCsv(closes) {
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const iso = (ts) => (ts ? new Date(ts * 1000).toISOString().slice(0, 10) : "unknown");
+  const qty = (v) => Number(v.toFixed(6)).toString(); // no raw float artifacts
   const lines = closes.map((c) =>
-    [c.symbol, c.mint, iso(c.acquiredTs), iso(c.soldTs), c.qty, c.proceedsUsd.toFixed(2), c.costUsd.toFixed(2), c.pnlUsd.toFixed(2)]
+    [c.symbol, c.mint, iso(c.acquiredTs), iso(c.soldTs), qty(c.qty), c.proceedsUsd.toFixed(2), c.costUsd.toFixed(2), c.pnlUsd.toFixed(2)]
       .map(esc)
       .join(",")
   );

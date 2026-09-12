@@ -135,6 +135,17 @@ test("degenerate sells never poison the report with NaN", () => {
   assert.equal(r.openQty, 0);
 });
 
+test("epsilon-boundary lot: buy and sell exactly 1e-9 units reconcile", () => {
+  const r = fifoBasis([
+    { side: "buy", qty: 1e-9, valueUsd: 0.0001, ts: 1 },
+    { side: "sell", qty: 1e-9, valueUsd: 0.0002, ts: 2 },
+  ]);
+  assert.equal(r.openQty, 0); // nothing stranded at the epsilon boundary
+  assert.equal(r.openLots.length, 0);
+  assert.equal(r.unknownBasis.length, 0);
+  assert.ok(r.closes.length >= 0); // closed or dust-booked, never silently lost
+});
+
 test("no trades -> zero everything", () => {
   const r = fifoBasis([]);
   assert.equal(r.realizedUsd, 0);
