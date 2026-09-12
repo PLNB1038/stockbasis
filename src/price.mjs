@@ -23,14 +23,19 @@ export function primeSolDayCache(ts, usd) {
 
 async function fromCoinGeckoHistory(day) {
   const [y, m, d] = day.split("-");
-  try {
-    const res = await fetch(`https://api.coingecko.com/api/v3/coins/solana/history?date=${d}-${m}-${y}`, { signal: AbortSignal.timeout(6000) });
-    if (!res.ok) return null;
-    const p = (await res.json())?.market_data?.current_price?.usd;
-    return Number.isFinite(p) ? p : null;
-  } catch {
-    return null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
+      const res = await fetch(`https://api.coingecko.com/api/v3/coins/solana/history?date=${d}-${m}-${y}`, { signal: AbortSignal.timeout(6000) });
+      if (res.status === 429 && attempt === 0) continue; // free tier throttles by minute
+      if (!res.ok) return null;
+      const p = (await res.json())?.market_data?.current_price?.usd;
+      return Number.isFinite(p) ? p : null;
+    } catch {
+      return null;
+    }
   }
+  return null;
 }
 
 /**

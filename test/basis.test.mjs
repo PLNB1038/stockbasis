@@ -113,6 +113,17 @@ test("float dust: exact-position close leaves no residual lot", () => {
   assert.equal(r.openCostUsd, 0);
 });
 
+test("same-second trades order by slot, not array luck", () => {
+  const r = fifoBasis([
+    { side: "buy", qty: 10, valueUsd: 1000, ts: 7, slot: 200 },
+    { side: "sell", qty: 4, valueUsd: 480, ts: 7, slot: 100 }, // earlier slot, arrived later
+  ]);
+  // slot 100 sell happened BEFORE slot 200 buy → unknown basis, excluded
+  assert.equal(r.realizedUsd, 0);
+  assert.equal(r.unknownBasis.length, 1);
+  assert.equal(r.openQty, 10);
+});
+
 test("no trades -> zero everything", () => {
   const r = fifoBasis([]);
   assert.equal(r.realizedUsd, 0);

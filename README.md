@@ -74,6 +74,12 @@ Working end to end on mainnet. Known simplifications: address validation is a
 base58 shape check; WSOL cash legs are priced per day; a new tokenized ticker
 appears in reports as soon as Jupiter tags it, with a curated list as fallback.
 
+## Tests
+
+`npm test` — 21 cases covering the FIFO engine (unit, randomized property tests
+against an independent implementation), transaction reconstruction (real mainnet
+fixtures, multi-account edge cases) and CSV output.
+
 ## License
 
 MIT

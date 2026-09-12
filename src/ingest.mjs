@@ -61,6 +61,7 @@ export async function ingestWallet(address, opts = {}) {
       if (!deltas.length) continue;
       const ctx = {
         ts: s.blockTime ?? 0,
+        slot: s.slot,
         signature: s.signature,
         solDelta: walletSolDelta(tx, address), // lamports; catches WSOL legs that open+close in one tx
       };
@@ -249,6 +250,7 @@ export async function pairTrades(deltas, ctx, trades, transfers) {
           qty: Math.abs(e.delta),
           valueUsd: (Math.abs(sol) / 1e9) * solPrice,
           ts: ctx.ts,
+          slot: ctx.slot,
           signature: ctx.signature,
         });
         continue;
@@ -261,6 +263,7 @@ export async function pairTrades(deltas, ctx, trades, transfers) {
         qty: Math.abs(e.delta),
         valueUsd: 0,
         ts: ctx.ts,
+        slot: ctx.slot,
         signature: ctx.signature,
       });
       continue;

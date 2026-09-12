@@ -72,6 +72,9 @@ function startJob(address) {
   if (cached) {
     job.status = "done";
     job.result = cached;
+    job.progress = cached.coverage?.scanned ?? 0;
+    job.trades = (cached.rows ?? []).reduce((s, r) => s + r.trades, 0);
+    job.phase = "done";
     job.finished = Date.now();
     jobs.set(job.id, job);
     return job;

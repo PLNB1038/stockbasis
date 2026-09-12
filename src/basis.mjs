@@ -6,6 +6,7 @@
  * @property {number} qty        // units of the stock token
  * @property {number} valueUsd   // cash value of the whole trade (stablecoin leg)
  * @property {number} ts         // unix seconds
+ * @property {number} [slot]     // on-chain slot — finer ordering inside one second
  */
 
 /**
@@ -28,7 +29,8 @@
  * @returns {BasisResult}
  */
 export function fifoBasis(trades) {
-  const sorted = [...trades].sort((a, b) => a.ts - b.ts);
+  // slot breaks ties inside one blockTime second (slot order == block order)
+  const sorted = [...trades].sort((a, b) => a.ts - b.ts || (a.slot ?? 0) - (b.slot ?? 0));
   /** @type {Array<{qty:number, costUsd:number, ts:number}>} */
   const lots = [];
   /** @type {Array<{qty:number, ts:number}>} deposited shares whose basis is unknowable */
