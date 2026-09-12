@@ -1,7 +1,5 @@
-// Dev helper: pick candidate wallets for the "featured" list on the landing page.
-// For each stock symbol: resolve the mint (Jupiter tags), take its deepest
-// DexScreener pool, then collect writable signers of recent pool transactions.
-//
+// Resolve each symbol to its deepest pool, then collect writable signers of
+// recent pool transactions — candidates for the featured list on the landing page.
 //   node scripts/featured-traders.mjs SPYx OPENAI DKNG [txsPerPool]
 
 import { readFileSync } from "node:fs";

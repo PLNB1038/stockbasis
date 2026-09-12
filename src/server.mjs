@@ -27,12 +27,48 @@ setInterval(() => {
   }
 }, 60 * 1000).unref();
 
+// the landing-page wallets are rescanned in the background so a first-time
+// visitor gets a finished report instantly instead of waiting on public RPC
+const precomputed = new Map(); // address -> job-shaped result
+let featuredAddresses = [];
+
+async function precomputeFeatured() {
+  for (const address of featuredAddresses) {
+    try {
+      const { trades } = await ingestWallet(address, { maxScanTx: MAX_SCAN_TX, targetStockTrades: TARGET_TRADES });
+      precomputed.set(address, await buildReport(trades));
+    } catch (e) {
+      console.error(`[stockbasis] precompute ${address.slice(0, 8)} failed: ${String(e?.message ?? e).slice(0, 80)}`);
+    }
+  }
+}
+
+async function loadFeatured() {
+  try {
+    featuredAddresses = (JSON.parse(await readFile(path.join(dataDir, "featured.json"), "utf8"))).map((f) => f.address);
+    precomputeFeatured();
+    setInterval(precomputeFeatured, 30 * 60 * 1000).unref();
+  } catch {
+    featuredAddresses = [];
+  }
+}
+
 function startJob(address) {
   for (const j of jobs.values()) {
     if (j.address === address && j.status === "running") return j; // identical scan already in flight
   }
 
   const job = { id: randomUUID(), address, status: "running", progress: 0, trades: 0, started: Date.now() };
+
+  const cached = precomputed.get(address);
+  if (cached) {
+    job.status = "done";
+    job.result = cached;
+    job.finished = Date.now();
+    jobs.set(job.id, job);
+    return job;
+  }
+
   jobs.set(job.id, job);
 
   ingestWallet(address, {
@@ -152,3 +188,4 @@ async function marketStats() {
 }
 
 server.listen(PORT, () => console.log(`[stockbasis] http://localhost:${PORT} (scan budget: ${MAX_SCAN_TX} txs or ${TARGET_TRADES} stock trades)`));
+loadFeatured();

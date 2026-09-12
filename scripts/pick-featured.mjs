@@ -1,7 +1,4 @@
-// Dev helper: score candidate wallets for the featured list.
-// Runs a bounded scan per address and prints one verdict line each —
-// pick wallets with buys AND sells, mixed W/L, and a low unknown-basis share.
-//
+// One verdict line per wallet: buys/sells, W/L, unknown-basis share.
 //   node scripts/pick-featured.mjs <addr1> <addr2> ... [maxScanTx]
 
 import { ingestWallet } from "../src/ingest.mjs";

@@ -1,9 +1,4 @@
-// Dev helper: find real tokenized-stock traders to use as demo wallets.
-//
-// Walks the recent history of a liquidity pool (e.g. a Raydium TSLAx/USDC pair),
-// extracts signer addresses from its transactions and counts their activity.
-// Pools have enormous histories; traders appear as co-signers.
-//
+// Walk a pool's recent transactions and rank writable signers.
 //   node scripts/find-demo-wallet.mjs <poolAddress> [txsToScan]
 
 import { rpc } from "../src/rpc.mjs";
