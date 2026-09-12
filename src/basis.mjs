@@ -21,6 +21,9 @@
 
 /**
  * Compute FIFO cost basis over a chronologically sorted list of trades.
+ * Always computes the strict variant (unknown basis excluded) plus, when
+ * market prices are attached, an "assumed" variant where unknown-basis
+ * disposals are valued at market (common tax-office convention).
  * @param {Trade[]} trades oldest-first
  * @returns {BasisResult}
  */
@@ -34,6 +37,7 @@ export function fifoBasis(trades) {
   const unknownBasis = [];
   let realizedUsd = 0;
   let realizedBuyUsd = 0;
+  let realizedAssumed = 0;
 
   for (const t of sorted) {
     if (t.side === "buy") {
@@ -59,16 +63,20 @@ export function fifoBasis(trades) {
       if (lot.qty <= 1e-9) lots.shift();
     }
 
-    // shares sold without known lots (acquired before the scanned window) have
-    // unknown basis — their proceeds are NOT profit, so they stay out of P&L
+    // shares sold without known lots (acquired before the scanned history, or
+    // deposited from custody) have unknown basis — excluded from strict P&L
     if (need > 1e-9) {
-      unknownBasis.push({ soldTs: t.ts, qty: need, proceedsUsd: need * perUnit });
+      const proceeds = need * perUnit;
+      unknownBasis.push({ soldTs: t.ts, qty: need, proceedsUsd: proceeds });
+      if (Number.isFinite(t.marketPx) && t.marketPx > 0) {
+        realizedAssumed += proceeds - need * t.marketPx;
+      }
     }
   }
 
   const openQty = lots.reduce((s, l) => s + l.qty, 0);
   const openCostUsd = lots.reduce((s, l) => s + l.costUsd, 0);
-  return { realizedUsd, realizedBuyUsd, closes, unknownBasis, openLots: lots, openQty, openCostUsd };
+  return { realizedUsd, realizedAssumed, realizedBuyUsd, closes, unknownBasis, openLots: lots, openQty, openCostUsd };
 }
 
 /**
@@ -94,6 +102,7 @@ export function perStockSummary(tradesByMint, meta) {
       wins,
       losses,
       unknownBasis: b.unknownBasis.length,
+      realizedAssumed: round(b.realizedAssumed, 2),
       closes: b.closes,
       realizedUsd: round(b.realizedUsd, 2),
       openQty: round(b.openQty, 6),

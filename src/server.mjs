@@ -35,7 +35,9 @@ let featuredAddresses = [];
 async function precomputeFeatured() {
   for (const address of featuredAddresses) {
     try {
-      const { trades } = await ingestWallet(address, { maxScanTx: MAX_SCAN_TX, targetStockTrades: TARGET_TRADES });
+      // landing-page wallets get the deep scan: no UI is waiting on them,
+      // and full history means real cost basis instead of "unknown" rows
+      const { trades } = await ingestWallet(address, { maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900 });
       precomputed.set(address, await buildReport(trades));
     } catch (e) {
       console.error(`[stockbasis] precompute ${address.slice(0, 8)} failed: ${String(e?.message ?? e).slice(0, 80)}`);
@@ -47,7 +49,7 @@ async function loadFeatured() {
   try {
     featuredAddresses = (JSON.parse(await readFile(path.join(dataDir, "featured.json"), "utf8"))).map((f) => f.address);
     precomputeFeatured();
-    setInterval(precomputeFeatured, 30 * 60 * 1000).unref();
+    setInterval(precomputeFeatured, 60 * 60 * 1000).unref();
   } catch {
     featuredAddresses = [];
   }

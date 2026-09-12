@@ -103,12 +103,15 @@ async function priceSanityGate(trades) {
   let corrected = 0;
   for (const t of trades) {
     const px = prices.get(t.mint);
-    if (!px || t.qty <= 0 || t.valueUsd <= 0) continue;
-    const implied = t.valueUsd / t.qty;
-    if (implied > px * 1.3 || implied < px * 0.7) {
-      t.valueUsd = Math.round(t.qty * px * 100) / 100;
-      t.priceCorrected = true;
-      corrected++;
+    if (!px) continue;
+    t.marketPx = px; // used by the optional market-basis assumption
+    if (t.qty > 0 && t.valueUsd > 0) {
+      const implied = t.valueUsd / t.qty;
+      if (implied > px * 1.3 || implied < px * 0.7) {
+        t.valueUsd = Math.round(t.qty * px * 100) / 100;
+        t.priceCorrected = true;
+        corrected++;
+      }
     }
   }
   return corrected;

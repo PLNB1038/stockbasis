@@ -47,6 +47,10 @@ form { display: flex; gap: 10px; margin: 34px 0 8px; }
   color: var(--muted); font-size: 14px;
 }
 
+.opt { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; color: var(--text); font-size: 14px; cursor: pointer; }
+.opt input { accent-color: var(--accent2); width: 15px; height: 15px; }
+.opt .hint { font-size: 12.5px; }
+
 #featured-list { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 .featured {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px;

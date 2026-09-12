@@ -1,7 +1,7 @@
 // Solana JSON-RPC client: global pacing, backoff, endpoint rotation on 429/5xx.
 
 const DEFAULT_RPC = "https://api.mainnet-beta.solana.com";
-const MIN_INTERVAL_MS = Number(process.env.RPC_MIN_INTERVAL_MS ?? 350);
+const MIN_INTERVAL_MS = Number(process.env.RPC_MIN_INTERVAL_MS ?? 120);
 const MAX_RETRIES = Number(process.env.RPC_MAX_RETRIES ?? 6);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

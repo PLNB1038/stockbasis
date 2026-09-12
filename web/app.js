@@ -75,6 +75,10 @@ function render(job) {
   const { rows, totalRealized, tokens, unknownBasis } = job.result;
   lastResult = rows;
 
+  const assume = $("assume").checked;
+  const showAssumed = assume && rows.some((r) => (r.realizedAssumed ?? 0) !== 0);
+  $("assume-opt").hidden = !(unknownBasis > 0);
+
   hide("progress");
   if (!rows.length) return showError("No tokenized-stock trades found in the scanned history. Try one of the wallets below the form.");
 
@@ -82,14 +86,15 @@ function render(job) {
   const losses = rows.reduce((s, r) => s + r.losses, 0);
   const trades = rows.reduce((s, r) => s + r.trades, 0);
 
+  const grand = showAssumed ? job.result.totalAssumed : totalRealized;
   const total = $("total");
-  total.textContent = `${totalRealized >= 0 ? "+" : "−"}$${Math.abs(totalRealized).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
-  total.className = `total-value ${totalRealized >= 0 ? "pos" : "neg"}`;
-  $("total-sub").textContent = `${trades} closed trades · ${wins}W/${losses}L · ${tokens} stocks · wallet ${job.address.slice(0, 4)}…${job.address.slice(-4)}`;
+  total.textContent = `${grand >= 0 ? "+" : "−"}$${Math.abs(grand).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  total.className = `total-value ${grand >= 0 ? "pos" : "neg"}`;
+  $("total-sub").textContent = `${trades} closed trades · ${wins}W/${losses}L · ${tokens} stocks · wallet ${job.address.slice(0, 4)}…${job.address.slice(-4)}` + (showAssumed ? " · market-basis assumption ON" : "");
 
   const note = $("basis-note");
   const notes = [];
-  if (unknownBasis > 0) notes.push(`${unknownBasis} disposal${unknownBasis > 1 ? "s" : ""} with unknown cost basis (shares bought before the scanned history) excluded from P&L.`);
+  if (unknownBasis > 0 && !showAssumed) notes.push(`${unknownBasis} disposal${unknownBasis > 1 ? "s" : ""} with unknown cost basis (bought before the scanned history, or deposited from custody) excluded from P&L — tick the box above to assume market price.`);
   if ((job.result.priceCorrections ?? 0) > 0) notes.push(`${job.result.priceCorrections} trade${job.result.priceCorrections > 1 ? "s" : ""} valued at market price (cash leg ambiguous in an aggregated route).`);
   if (notes.length) {
     note.textContent = notes.join(" ");
@@ -120,10 +125,11 @@ function render(job) {
   $("dnote").hidden = closes.length <= 100;
 
   $("rows").innerHTML = rows.map((r) => {
-    const noBasis = r.wins + r.losses === 0 && r.unknownBasis > 0;
+    const noBasis = r.wins + r.losses === 0 && r.unknownBasis > 0 && !showAssumed;
+    const val = showAssumed && r.unknownBasis ? r.realizedAssumed : r.realizedUsd;
     const realized = noBasis
       ? `<span class="hint" title="all disposals had unknown cost basis — excluded">n/a</span>`
-      : `<span class="${r.realizedUsd >= 0 ? "pos" : "neg"}">${fmt(r.realizedUsd)}</span>`;
+      : `<span class="${val >= 0 ? "pos" : "neg"}">${fmt(val)}</span>`;
     return `
     <tr>
       <td class="sym">${esc(r.symbol)}<span class="hint"> ${esc(r.name)}</span></td>

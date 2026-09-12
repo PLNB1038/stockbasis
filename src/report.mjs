@@ -34,6 +34,7 @@ export async function buildReport(trades) {
     rows,
     closes,
     totalRealized: Math.round(rows.reduce((s, r) => s + r.realizedUsd, 0) * 100) / 100,
+    totalAssumed: Math.round(rows.reduce((s, r) => s + (r.realizedAssumed ?? 0), 0) * 100) / 100,
     unknownBasis: rows.reduce((s, r) => s + (r.unknownBasis ?? 0), 0),
     priceCorrections: trades.filter((t) => t.priceCorrected).length,
     tokens: rows.length,
