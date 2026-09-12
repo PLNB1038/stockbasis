@@ -70,6 +70,9 @@ export async function ingestWallet(address, opts = {}) {
   }
 
   const corrected = await priceSanityGate(trades);
+  // sigs/trades arrive newest-first; FIFO relies on stable same-second order,
+  // so hand the pipeline an oldest-first array
+  trades.reverse();
   const lastFetched = sigs[Math.min(scanned, sigs.length) - 1]; // sigs are newest-first
 
   return {
@@ -77,6 +80,7 @@ export async function ingestWallet(address, opts = {}) {
     transfers,
     seen: scanned,
     corrected,
+    ambiguous: ambiguousCount,
     coverage: { fromTs: lastFetched?.blockTime ?? null, toTs: sigs[0]?.blockTime ?? null, scanned },
   };
 }
@@ -84,17 +88,17 @@ export async function ingestWallet(address, opts = {}) {
 const TX_CONCURRENCY = Number(process.env.INGEST_CONCURRENCY ?? 5);
 
 /**
- * Complex aggregator routes make cash-leg pairing ambiguous; when the implied
- * trade price is far off market, value the trade at market instead of booking
- * a nonsense number. Returns how many trades were corrected.
+ * Aggregator routes make cash-leg pairing ambiguous. Trades whose implied
+ * price is far off market are repriced at market when recent; older ones are
+ * dropped entirely — a current spot price must not rewrite month-old history.
  */
 async function priceSanityGate(trades) {
-  if (!trades.length) return 0;
+  if (!trades.length) return { corrected: 0, ambiguous: 0 };
   const mints = [...new Set(trades.map((t) => t.mint))];
   let prices;
   try {
-    const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(",")}`);
-    if (!res.ok) return 0;
+    const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(",")}`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return { corrected: 0, ambiguous: 0 };
     const pairs = await res.json();
     prices = new Map();
     for (const p of pairs ?? []) {
@@ -104,24 +108,33 @@ async function priceSanityGate(trades) {
       if (!prices.has(base) || (p.liquidity?.usd ?? 0) > 0) prices.set(base, px);
     }
   } catch {
-    return 0; // no market data — leave trades as paired
+    return { corrected: 0, ambiguous: 0 }; // no market data — leave trades as paired
   }
 
   let corrected = 0;
-  for (const t of trades) {
+  let ambiguousCount = 0;
+  const now = Date.now() / 1000;
+  for (let i = trades.length - 1; i >= 0; i--) {
+    const t = trades[i];
     const px = prices.get(t.mint);
     if (!px) continue;
     t.marketPx = px; // used by the optional market-basis assumption
-    if (t.qty > 0 && t.valueUsd > 0) {
-      const implied = t.valueUsd / t.qty;
-      if (implied > px * 1.3 || implied < px * 0.7) {
-        t.valueUsd = Math.round(t.qty * px * 100) / 100;
-        t.priceCorrected = true;
-        corrected++;
-      }
+    if (t.qty <= 0 || t.valueUsd <= 0) continue;
+    const implied = t.valueUsd / t.qty;
+    if (implied <= px * 1.3 && implied >= px * 0.7) continue;
+
+    if (now - t.ts < 7 * 86400) {
+      // recent: today's spot is a fair stand-in for the trade-time price
+      t.valueUsd = Math.round(t.qty * px * 100) / 100;
+      t.priceCorrected = true;
+      corrected++;
+    } else {
+      // old: spot says nothing about the historical price — drop rather than lie
+      trades.splice(i, 1);
+      ambiguousCount++;
     }
   }
-  return corrected;
+  return { corrected, ambiguous: ambiguousCount };
 }
 
 /** Fetch one parsed transaction; null if a mirror doesn't index it. */
@@ -144,7 +157,7 @@ export function tokenDeltas(meta, owner) {
     const before = pre.get(k);
     const was = num(before?.uiTokenAmount) ?? 0;
     const now = num(pb.uiTokenAmount) ?? 0;
-    if (Math.abs(now - was) > 1e-9 && (!pb.owner || pb.owner === owner)) {
+    if (Math.abs(now - was) > 1e-9 && pb.owner === owner) {
       out.push({ mint: pb.mint, delta: now - was });
     }
   }
@@ -152,7 +165,7 @@ export function tokenDeltas(meta, owner) {
   for (const [k, pb] of pre) {
     if (post.some(([pk]) => pk === k)) continue;
     const was = num(pb.uiTokenAmount) ?? 0;
-    if (Math.abs(was) > 1e-9 && (!pb.owner || pb.owner === owner)) out.push({ mint: pb.mint, delta: -was });
+    if (Math.abs(was) > 1e-9 && pb.owner === owner) out.push({ mint: pb.mint, delta: -was });
   }
   return out;
 
@@ -200,11 +213,17 @@ async function pairTrades(deltas, ctx, trades, transfers) {
   const solPrice = needsSolPrice ? await solUsdOn(ctx.ts) : 1;
   const cashUsd = (c) => (c.mint === WSOL ? Math.abs(c.delta) * solPrice : Math.abs(c.delta));
 
+  // one cash leg cannot honestly price two equity movements (bundle/route) —
+  // record them as transfers rather than invent a split
+  if (equity.length > 1 && cash.length !== equity.length) {
+    for (const e of equity) transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
+    return;
+  }
+
   for (const e of equity) {
-    // only an opposite-sign cash leg pays for a trade; an equity movement
-    // without one is a transfer (deposit, withdrawal, gift) — never a sale
-    const idx = cash.findIndex((c) => Math.sign(c.delta) !== Math.sign(e.delta));
-    if (idx === -1) {
+    // every opposite-sign cash leg of the same tx participates in the trade
+    const legs = cash.filter((c) => Math.sign(c.delta) !== Math.sign(e.delta));
+    if (!legs.length) {
       // most "missing" cash legs are wrapped SOL created and burned inside the
       // same transaction: the wallet's SOL balance shows the money moving
       const sol = ctx.solDelta ?? 0;
@@ -222,13 +241,13 @@ async function pairTrades(deltas, ctx, trades, transfers) {
       transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
       continue;
     }
-    const counter = cash[idx];
-    cash.splice(idx, 1); // one cash leg pays for exactly one trade
+    const valueUsd = legs.reduce((s, c) => s + cashUsd(c), 0);
+    for (const c of legs) cash.splice(cash.indexOf(c), 1); // consumed
     trades.push({
       side: e.delta > 0 ? "buy" : "sell",
       mint: e.mint,
       qty: Math.abs(e.delta),
-      valueUsd: cashUsd(counter),
+      valueUsd,
       ts: ctx.ts,
       signature: ctx.signature,
     });

@@ -34,7 +34,7 @@ export async function lookupToken(mint) {
 
   let out = null;
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(`${SEARCH_URL}?query=${encodeURIComponent(mint)}`);
+    const res = await fetch(`${SEARCH_URL}?query=${encodeURIComponent(mint)}`, { signal: AbortSignal.timeout(8000) });
     if (res.status === 429 && attempt < 4) {
       await sleep(1500 * 2 ** attempt);
       continue;

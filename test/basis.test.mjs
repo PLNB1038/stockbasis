@@ -69,6 +69,17 @@ test("assumed variant adds market-valued unknowns on top of known P&L", () => {
   assert.equal(r.unknownBasis.length, 1);
 });
 
+test("same-second trades keep oldest-first order (stable sort contract)", () => {
+  const r = fifoBasis([
+    { side: "buy", qty: 10, valueUsd: 1000, ts: 5 },
+    { side: "sell", qty: 6, valueUsd: 720, ts: 5 }, // same second, must consume the lot
+  ]);
+  assert.equal(r.closes.length, 1);
+  assert.equal(r.closes[0].costUsd, 600);
+  assert.equal(r.realizedUsd, 120);
+  assert.equal(r.openQty, 4);
+});
+
 test("no trades -> zero everything", () => {
   const r = fifoBasis([]);
   assert.equal(r.realizedUsd, 0);

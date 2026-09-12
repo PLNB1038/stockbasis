@@ -19,11 +19,17 @@ const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 /** @type {Map<string, object>} */
 const jobs = new Map();
 
-// finished jobs linger 10 minutes for polling, then make room for new ones
+// finished jobs linger 10 minutes for polling, then make room for new ones;
+// a scan stuck past 6 minutes (hung upstream fetch) is failed as well
 setInterval(() => {
   const cutoff = Date.now() - 10 * 60 * 1000;
   for (const [id, j] of jobs) {
     if ((j.status === "done" || j.status === "error") && j.finished && j.finished < cutoff) jobs.delete(id);
+    else if (j.status === "running" && Date.now() - j.started > 6 * 60 * 1000) {
+      j.status = "error";
+      j.error = "scan timed out";
+      j.finished = Date.now();
+    }
   }
 }, 60 * 1000).unref();
 

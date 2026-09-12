@@ -45,6 +45,7 @@ export async function rpc(method, params, opts = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout(15000),
     });
 
     if (res.status === 429 || res.status >= 500) {

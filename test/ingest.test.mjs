@@ -27,6 +27,15 @@ test("tokenDeltas catches accounts that vanished in the tx", () => {
   assert.equal(deltas[0].delta, -5);
 });
 
+test("tokenDeltas ignores ownerless balances", () => {
+  const meta = {
+    preTokenBalances: [{ accountIndex: 0, mint: MINT, owner: undefined, uiTokenAmount: { uiAmount: 10 } }],
+    postTokenBalances: [{ accountIndex: 0, mint: MINT, owner: undefined, uiTokenAmount: { uiAmount: 4 } }],
+  };
+  const deltas = tokenDeltas(meta, OWNER);
+  assert.equal(deltas.length, 0);
+});
+
 test("tokenDeltas nets across accounts of one mint", () => {
   const meta = {
     preTokenBalances: [bal(0, OWNER, 10), bal(1, OWNER, 0)],

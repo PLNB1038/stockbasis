@@ -95,12 +95,14 @@ function render(job) {
   total.className = `total-value ${grand >= 0 ? "pos" : "neg"}`;
   const cov = job.result.coverage;
   const covTxt = cov?.fromTs ? ` · history ${day(cov.fromTs)} → ${day(cov.toTs)} (${cov.scanned.toLocaleString("en-US")} txs)` : "";
-  $("total-sub").textContent = `${trades} closed trades · ${wins}W/${losses}L · ${tokens} stocks · wallet ${job.address.slice(0, 4)}…${job.address.slice(-4)}` + covTxt + (showAssumed ? " · market-basis assumption ON" : "");
+  const closedDisposals = (job.result.closes ?? []).length;
+  $("total-sub").textContent = `${trades} stock trades · ${closedDisposals} closed disposals · ${wins}W/${losses}L · ${tokens} stocks` + covTxt + (showAssumed ? " · market-basis assumption ON" : "");
 
   const note = $("basis-note");
   const notes = [];
   if (unknownBasis > 0 && !showAssumed) notes.push(`${unknownBasis} disposal${unknownBasis > 1 ? "s" : ""} with unknown cost basis (bought before the scanned history, or deposited from custody) excluded from P&L — tick the box above to assume market price.`);
-  if ((job.result.priceCorrections ?? 0) > 0) notes.push(`${job.result.priceCorrections} trade${job.result.priceCorrections > 1 ? "s" : ""} valued at market price (cash leg ambiguous in an aggregated route).`);
+  if ((job.result.priceCorrections ?? 0) > 0) notes.push(`${job.result.priceCorrections} recent trade${job.result.priceCorrections > 1 ? "s" : ""} valued at market price (cash leg ambiguous in an aggregated route).`);
+  if ((job.result.ambiguous ?? 0) > 0) notes.push(`${job.result.ambiguous} older trade${job.result.ambiguous > 1 ? "s" : ""} excluded as ambiguous (aggregated route, no reliable historical price).`);
   if (notes.length) {
     note.textContent = notes.join(" ");
     note.hidden = false;
@@ -115,7 +117,7 @@ function render(job) {
       <td class="sym">${esc(c.symbol)}</td>
       <td class="num hint">${c.acquiredTs ? day(c.acquiredTs) : "unknown"}</td>
       <td class="num hint">${day(c.soldTs)}</td>
-      <td class="num">${c.qty}</td>
+      <td class="num">${fmtQty(c.qty)}</td>
       <td class="num">${fmt(c.proceedsUsd)}</td>
       <td class="num">${fmt(c.costUsd)}</td>
       <td class="num ${c.pnlUsd >= 0 ? "pos" : "neg"}">${fmt(c.pnlUsd)}</td>
@@ -141,7 +143,7 @@ function render(job) {
       <td class="num">${r.trades}</td>
       <td class="num hint" ${r.unknownBasis ? `title="+${r.unknownBasis} with unknown basis"` : ""}>${r.wins}/${r.losses}</td>
       <td class="num">${realized}</td>
-      <td class="num">${r.openQty ? r.openQty : "—"}</td>
+      <td class="num">${r.openQty ? fmtQty(r.openQty) : "—"}</td>
       <td class="num">${r.openCostUsd ? fmt(r.openCostUsd) : "—"}</td>
       <td class="num hint">${dates(r)}</td>
     </tr>`;
@@ -163,7 +165,7 @@ $("csv").addEventListener("click", () => {
   const head = "symbol,acquired_date,sold_date,qty,proceeds_usd,cost_basis_usd,gain_usd";
   const d = (ts) => (ts ? new Date(ts * 1000).toISOString().slice(0, 10) : "unknown");
   const lines = lastCloses.map((c) =>
-    [c.symbol, d(c.acquiredTs), d(c.soldTs), c.qty, c.proceedsUsd.toFixed(2), c.costUsd.toFixed(2), c.pnlUsd.toFixed(2)].join(",")
+    [csvSafe(c.symbol), d(c.acquiredTs), d(c.soldTs), fmtQty(c.qty), c.proceedsUsd.toFixed(2), c.costUsd.toFixed(2), c.pnlUsd.toFixed(2)].join(",")
   );
   const blob = new Blob([head + "\n" + lines.join("\n")], { type: "text/csv" });
   const a = document.createElement("a");
@@ -178,6 +180,8 @@ const compact = (n) =>
   n >= 1e6 ? (n / 1e6).toFixed(1) + "M" :
   n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(n);
 const fmt = (n) => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+const fmtQty = (q) => Number(q.toFixed(6)).toString();
+const csvSafe = (s) => (/^[=+\-@]/.test(String(s).trimStart()) ? "'" + s : s);
 const day = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 const dates = (r) => {
   if (!r.firstTs) return "";
