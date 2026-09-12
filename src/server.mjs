@@ -99,6 +99,7 @@ function startJob(address) {
 }
 
 const server = http.createServer(async (req, res) => {
+  try {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (req.method === "POST" && url.pathname === "/api/jobs") {
@@ -106,8 +107,9 @@ const server = http.createServer(async (req, res) => {
     for await (const chunk of req) {
       body += chunk;
       if (body.length > 1024) {
-        req.destroy(); // stop the stream before it can push more
-        return json(res, 413, { error: "payload too large" });
+        const out = json(res, 413, { error: "payload too large" });
+        req.destroy(); // then stop the stream
+        return out;
       }
     }
     let address;
@@ -154,6 +156,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   json(res, 405, { error: "method not allowed" });
+  } catch {
+    // client disconnected mid-request (ECONNRESET) — drop it, keep serving
+    try { req.destroy(); res.destroy(); } catch {}
+  }
 });
 
 function json(res, code, body) {
@@ -196,6 +202,10 @@ async function marketStats() {
   statsCache = { at: Date.now(), data: out };
   return out;
 }
+
+// last-resort net: a single weird event must never kill the demo process
+process.on("uncaughtException", (e) => console.error("[stockbasis] swallowed:", String(e).slice(0, 120)));
+process.on("unhandledRejection", (e) => console.error("[stockbasis] swallowed rejection:", String(e).slice(0, 120)));
 
 server.listen(PORT, () => console.log(`[stockbasis] http://localhost:${PORT} (scan budget: ${MAX_SCAN_TX} txs or ${TARGET_TRADES} stock trades)`));
 loadFeatured();

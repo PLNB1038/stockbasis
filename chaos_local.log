@@ -1,0 +1,14 @@
+[stockbasis] http://localhost:8796 (scan budget: 1500 txs or 30 stock trades)
+node:internal/process/promises:394
+    triggerUncaughtException(err, true /* fromPromise */);
+    ^
+
+Error: aborted
+    at abortIncoming (node:_http_server:838:17)
+    at socketOnClose (node:_http_server:832:3)
+    at Socket.emit (node:events:520:35)
+    at TCP.<anonymous> (node:net:346:12) {
+  code: 'ECONNRESET'
+}
+
+Node.js v24.11.1
