@@ -69,10 +69,50 @@ export async function ingestWallet(address, opts = {}) {
     opts.onProgress?.({ scanned, trades: trades.length, budget: maxTx });
   }
 
-  return { trades, transfers, seen: scanned };
+  const corrected = await priceSanityGate(trades);
+
+  return { trades, transfers, seen: scanned, corrected };
 }
 
 const TX_CONCURRENCY = Number(process.env.INGEST_CONCURRENCY ?? 5);
+
+/**
+ * Complex aggregator routes make cash-leg pairing ambiguous; when the implied
+ * trade price is far off market, value the trade at market instead of booking
+ * a nonsense number. Returns how many trades were corrected.
+ */
+async function priceSanityGate(trades) {
+  if (!trades.length) return 0;
+  const mints = [...new Set(trades.map((t) => t.mint))];
+  let prices;
+  try {
+    const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(",")}`);
+    if (!res.ok) return 0;
+    const pairs = await res.json();
+    prices = new Map();
+    for (const p of pairs ?? []) {
+      const base = p.baseToken?.address;
+      const px = Number(p.priceUsd);
+      if (!base || !Number.isFinite(px) || px <= 0) continue;
+      if (!prices.has(base) || (p.liquidity?.usd ?? 0) > 0) prices.set(base, px);
+    }
+  } catch {
+    return 0; // no market data — leave trades as paired
+  }
+
+  let corrected = 0;
+  for (const t of trades) {
+    const px = prices.get(t.mint);
+    if (!px || t.qty <= 0 || t.valueUsd <= 0) continue;
+    const implied = t.valueUsd / t.qty;
+    if (implied > px * 1.3 || implied < px * 0.7) {
+      t.valueUsd = Math.round(t.qty * px * 100) / 100;
+      t.priceCorrected = true;
+      corrected++;
+    }
+  }
+  return corrected;
+}
 
 /** Fetch one parsed transaction; null if a mirror doesn't index it. */
 async function fetchTx(s, opts = {}) {

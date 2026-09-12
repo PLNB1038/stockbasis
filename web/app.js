@@ -88,8 +88,11 @@ function render(job) {
   $("total-sub").textContent = `${trades} closed trades · ${wins}W/${losses}L · ${tokens} stocks · wallet ${job.address.slice(0, 4)}…${job.address.slice(-4)}`;
 
   const note = $("basis-note");
-  if (unknownBasis > 0) {
-    note.textContent = `${unknownBasis} disposal${unknownBasis > 1 ? "s" : ""} with unknown cost basis (shares bought before the scanned history) are excluded from P&L.`;
+  const notes = [];
+  if (unknownBasis > 0) notes.push(`${unknownBasis} disposal${unknownBasis > 1 ? "s" : ""} with unknown cost basis (shares bought before the scanned history) excluded from P&L.`);
+  if ((job.result.priceCorrections ?? 0) > 0) notes.push(`${job.result.priceCorrections} trade${job.result.priceCorrections > 1 ? "s" : ""} valued at market price (cash leg ambiguous in an aggregated route).`);
+  if (notes.length) {
+    note.textContent = notes.join(" ");
     note.hidden = false;
   } else {
     note.hidden = true;

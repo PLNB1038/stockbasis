@@ -6,7 +6,7 @@ import { lookupToken } from "./classify.mjs";
 /**
  * Build the full report payload from a flat list of trades.
  * @param {Array<import('./basis.mjs').Trade & {mint: string}>} trades
- * @returns {Promise<{rows: Array<object>, totalRealized: number, tokens: number}>}
+ * @returns {Promise<{rows: Array<object>, totalRealized: number, tokens: number, unknownBasis: number, priceCorrections: number}>}
  */
 export async function buildReport(trades) {
   /** @type {Map<string, Array<import('./basis.mjs').Trade>>} */
@@ -35,6 +35,7 @@ export async function buildReport(trades) {
     closes,
     totalRealized: Math.round(rows.reduce((s, r) => s + r.realizedUsd, 0) * 100) / 100,
     unknownBasis: rows.reduce((s, r) => s + (r.unknownBasis ?? 0), 0),
+    priceCorrections: trades.filter((t) => t.priceCorrected).length,
     tokens: rows.length,
   };
 }
