@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StockBasis — P&amp;L for tokenized equities on Solana</title>
+<meta name="description" content="Paste a wallet — get a brokerage-style statement of your tokenized-stock trades on Solana. Read-only.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%239945ff'/%3E%3Ctext x='16' y='23' font-size='19' font-family='monospace' font-weight='bold' text-anchor='middle' fill='%2314f195'%3ES%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css?v=5">
+</head>
+<body>
+<main>
+  <header>
+    <div class="logo">Stock<span>Basis</span></div>
+    <p class="tagline">Cost basis &amp; P&amp;L for tokenized equities on Solana.<br>
+    Paste a wallet — get the statement your exchange never gave you.</p>
+    <p class="badge">read-only · no keys · no approvals</p>
+  </header>
+
+  <p class="market" id="market" hidden></p>
+
+  <form id="scan">
+    <input id="address" type="text" placeholder="Paste a Solana wallet address…" autocomplete="off" spellcheck="false" autofocus>
+    <button type="submit" id="go">Scan</button>
+  </form>
+
+  <section id="featured" hidden>
+    <p class="hint">Real wallets already active in tokenized equities:</p>
+    <div id="featured-list"></div>
+  </section>
+
+  <section id="progress" hidden>
+    <div class="bar"><div class="fill" id="bar-fill"></div></div>
+    <p id="progress-text">Scanning on-chain history…</p>
+  </section>
+
+  <section id="error" hidden></section>
+
+  <section id="report" hidden>
+    <div class="total">
+      <span class="total-label">Total realized P&amp;L</span>
+      <span class="total-value" id="total"></span>
+      <span class="total-sub" id="total-sub"></span>
+    </div>
+    <p class="hint" id="basis-note" hidden></p>
+    <table id="tbl">
+      <thead>
+        <tr><th>Stock</th><th class="num">Trades</th><th class="num">W/L</th><th class="num">Realized P&amp;L</th><th class="num">Open qty</th><th class="num">Open cost</th><th class="num">Activity</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <h2 class="sub">Disposals <span class="hint">— each closing lot, 1099-B style</span></h2>
+    <table id="dtable">
+      <thead>
+        <tr><th>Stock</th><th class="num">Acquired</th><th class="num">Sold</th><th class="num">Qty</th><th class="num">Proceeds</th><th class="num">Cost basis</th><th class="num">Gain</th></tr>
+      </thead>
+      <tbody id="drows"></tbody>
+    </table>
+    <p class="hint" id="dnote" hidden></p>
+    <div class="actions">
+      <button id="csv">Download CSV</button>
+      <a href="https://github.com/PLNB1038/stockbasis" target="_blank" rel="noopener">source &amp; docs ↗</a>
+    </div>
+    <p class="disclaimer">
+      The scanner walks the wallet's recent history until it collects ~30 stock trades
+      (or hits its budget), classifies tokenized-equity mints by on-chain token tags
+      (xStocks, Sunrise, Ondo, PreStocks) and computes FIFO cost basis in USD.
+      WSOL cash legs are valued at the current SOL price.
+      Read-only: the tool never asks for keys and never moves funds. Not tax advice.
+    </p>
+  </section>
+</main>
+<script src="app.js?v=5"></script>
+</body>
+</html>
