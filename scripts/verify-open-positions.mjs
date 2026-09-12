@@ -34,7 +34,7 @@ for (const address of process.argv.slice(2)) {
     }
   }
 
-  const verdict = mismatches.length ? `MISMATCH ✗` : `OK ✓`;
+  const verdict = mismatches.length ? "MISMATCH" : "OK";
   console.log(`${address.slice(0, 8)}… | rows ${report.rows.length} | open positions checked: ${checked} | ${verdict}`);
   for (const m of mismatches) console.log(`   ${m}`);
 }
