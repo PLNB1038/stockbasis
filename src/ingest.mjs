@@ -259,5 +259,9 @@ function walletSolDelta(tx, address) {
   const keys = tx.transaction?.message?.accountKeys ?? [];
   const i = keys.findIndex((k) => k.pubkey === address);
   if (i === -1) return 0;
-  return (tx.meta.postBalances?.[i] ?? 0) - (tx.meta.preBalances?.[i] ?? 0);
+  let delta = (tx.meta.postBalances?.[i] ?? 0) - (tx.meta.preBalances?.[i] ?? 0);
+  // the fee payer pays network fees from the same balance — that is not part
+  // of any trade's cash leg
+  if (i === 0 && tx.meta.fee) delta += tx.meta.fee;
+  return delta;
 }

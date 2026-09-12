@@ -105,7 +105,10 @@ const server = http.createServer(async (req, res) => {
     let body = "";
     for await (const chunk of req) {
       body += chunk;
-      if (body.length > 1024) return json(res, 413, { error: "payload too large" });
+      if (body.length > 1024) {
+        req.destroy(); // stop the stream before it can push more
+        return json(res, 413, { error: "payload too large" });
+      }
     }
     let address;
     try { address = JSON.parse(body).address; } catch { /* handled below */ }

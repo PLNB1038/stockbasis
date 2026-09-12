@@ -6,7 +6,7 @@
 <title>StockBasis — P&amp;L for tokenized equities on Solana</title>
 <meta name="description" content="Paste a wallet — get a brokerage-style statement of your tokenized-stock trades on Solana. Read-only.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%239945ff'/%3E%3Ctext x='16' y='23' font-size='19' font-family='monospace' font-weight='bold' text-anchor='middle' fill='%2314f195'%3ES%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
 <main>
@@ -70,11 +70,13 @@
       The scanner walks the wallet's recent history until it collects ~30 stock trades
       (or hits its budget), classifies tokenized-equity mints by on-chain token tags
       (xStocks, Sunrise, Ondo, PreStocks) and computes FIFO cost basis in USD.
-      WSOL cash legs are valued at the current SOL price.
-      Read-only: the tool never asks for keys and never moves funds. Not tax advice.
+      WSOL cash legs are valued at the SOL price of the trade day; network fees
+      are excluded from trade values. Wash-sale adjustments are not applied —
+      treat the output as a preliminary statement and consult a tax professional.
+      Read-only: the tool never asks for keys and never moves funds.
     </p>
   </section>
 </main>
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>

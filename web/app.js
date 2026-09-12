@@ -36,11 +36,14 @@ async function loadMarket() {
   } catch { /* strip is optional decoration */ }
 }
 
+let pollSeq = 0; // a newer submit invalidates an in-flight poll loop
+
 $("scan").addEventListener("submit", async (e) => {
   e.preventDefault();
   const address = $("address").value.trim();
   if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return showError("That doesn't look like a Solana address.");
 
+  const seq = ++pollSeq;
   lastAddress = address;
   $("go").disabled = true;
   show("progress"); hide("error"); hide("report");
@@ -49,16 +52,17 @@ $("scan").addEventListener("submit", async (e) => {
     const res = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }) });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-    await poll(body.id);
+    await poll(body.id, seq);
   } catch (err) {
-    showError(String(err.message ?? err));
+    if (seq === pollSeq) showError(String(err.message ?? err));
   } finally {
-    $("go").disabled = false;
+    if (seq === pollSeq) $("go").disabled = false;
   }
 });
 
-async function poll(id) {
+async function poll(id, seq) {
   for (;;) {
+    if (seq !== pollSeq) return; // superseded by a newer scan
     const res = await fetch(`/api/jobs/${id}`);
     const job = await res.json();
     if (job.status === "done") {
@@ -91,7 +95,7 @@ function render(job) {
 
   const grand = showAssumed ? job.result.totalAssumed : totalRealized;
   const total = $("total");
-  total.textContent = `${grand >= 0 ? "+" : "−"}$${Math.abs(grand).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  total.textContent = `${grand >= 0 ? "+" : "−"}${usd.format(Math.abs(grand))}`;
   total.className = `total-value ${grand >= 0 ? "pos" : "neg"}`;
   const cov = job.result.coverage;
   const covTxt = cov?.fromTs ? ` · history ${day(cov.fromTs)} → ${day(cov.toTs)} (${cov.scanned.toLocaleString("en-US")} txs)` : "";
@@ -179,7 +183,8 @@ const compact = (n) =>
   n >= 1e9 ? (n / 1e9).toFixed(1) + "B" :
   n >= 1e6 ? (n / 1e6).toFixed(1) + "M" :
   n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(n);
-const fmt = (n) => `${n >= 0 ? "+" : "−"}$${Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const fmt = (n) => `${n >= 0 ? "+" : "−"}${usd.format(Math.abs(n))}`;
 const fmtQty = (q) => Number(q.toFixed(6)).toString();
 const csvSafe = (s) => (/^[=+\-@]/.test(String(s).trimStart()) ? "'" + s : s);
 const day = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
