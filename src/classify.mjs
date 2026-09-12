@@ -53,6 +53,11 @@ export async function lookupToken(mint) {
   return out;
 }
 
+/** Test hook: seed the cache so fixture tests never touch the network. */
+export function primeTokenCache(mint, meta) {
+  cache.set(mint, meta);
+}
+
 /** Stablecoins we treat as the cash leg of a trade. */
 export const STABLES = new Set([
   "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC

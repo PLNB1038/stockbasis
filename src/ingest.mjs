@@ -181,9 +181,10 @@ export function tokenDeltas(meta, owner) {
 
 /**
  * Pair equity deltas with cash deltas inside one tx.
+ * Exported for fixture regression tests.
  * @returns {Promise<void>}
  */
-async function pairTrades(deltas, ctx, trades, transfers) {
+export async function pairTrades(deltas, ctx, trades, transfers) {
   // net movements per mint first — dust in a second token account of the same
   // mint must not become a second "trade"; fully-cancelled mints drop out
   const net = new Map();
@@ -195,10 +196,11 @@ async function pairTrades(deltas, ctx, trades, transfers) {
 
   const metas = new Map();
   for (const mint of net.keys()) {
+    if (metas.has(mint)) continue;
     try {
       metas.set(mint, await lookupToken(mint));
     } catch {
-      return; // classification unavailable: skip the tx rather than misreport it
+      metas.set(mint, null); // unclassifiable right now: non-stock, other legs still trade
     }
   }
 
@@ -264,7 +266,7 @@ async function pairTrades(deltas, ctx, trades, transfers) {
 }
 
 /** Net SOL change of the wallet's own system account, in lamports. */
-function walletSolDelta(tx, address) {
+export function walletSolDelta(tx, address) {
   const keys = tx.transaction?.message?.accountKeys ?? [];
   const i = keys.findIndex((k) => k.pubkey === address);
   if (i === -1) return 0;
