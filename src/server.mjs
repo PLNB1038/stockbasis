@@ -43,8 +43,8 @@ async function precomputeFeatured() {
     try {
       // landing-page wallets get the deep scan: no UI is waiting on them,
       // and full history means real cost basis instead of "unknown" rows
-      const { trades, coverage } = await ingestWallet(address, { maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900 });
-      precomputed.set(address, { ...(await buildReport(trades)), coverage });
+      const { trades, coverage, ambiguous } = await ingestWallet(address, { maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900 });
+      precomputed.set(address, { ...(await buildReport(trades)), coverage, ambiguous });
     } catch (e) {
       console.error(`[stockbasis] precompute ${address.slice(0, 8)} failed: ${String(e?.message ?? e).slice(0, 80)}`);
     }
@@ -84,8 +84,8 @@ function startJob(address) {
     onWalk: (n) => { job.progress = n; job.phase = "history"; },
     onProgress: (p) => { job.progress = p.scanned; job.trades = p.trades; job.phase = "scan"; },
   })
-    .then(async ({ trades, coverage }) => {
-      job.result = { ...(await buildReport(trades)), coverage };
+    .then(async ({ trades, coverage, ambiguous }) => {
+      job.result = { ...(await buildReport(trades)), coverage, ambiguous };
       job.status = "done";
       job.finished = Date.now();
     })
