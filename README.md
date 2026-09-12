@@ -76,9 +76,9 @@ appears in reports as soon as Jupiter tags it, with a curated list as fallback.
 
 ## Tests
 
-`npm test` — 21 cases covering the FIFO engine (unit, randomized property tests
-against an independent implementation), transaction reconstruction (real mainnet
-fixtures, multi-account edge cases) and CSV output.
+`npm test` — FIFO engine (unit cases, randomized property tests against an
+independent reference implementation), transaction reconstruction on real
+mainnet fixtures (multi-account and epsilon-boundary edge cases), CSV output.
 
 ## License
 

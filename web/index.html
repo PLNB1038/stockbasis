@@ -74,8 +74,10 @@
       The scanner walks the wallet's recent history until it collects ~30 stock trades
       (or hits its budget), classifies tokenized-equity mints by on-chain token tags
       (xStocks, Sunrise, Ondo, PreStocks) and computes FIFO cost basis in USD.
-      WSOL cash legs are valued at the SOL price of the trade day; network fees
-      are excluded from trade values. Wash-sale adjustments are not applied —
+      Multi-token aggregator routes are recorded as transfers (no greedy cash
+      splitting) to preserve accounting integrity. WSOL cash legs are valued at
+      the SOL price of the trade day; network fees are excluded from trade
+      values. Wash-sale adjustments are not applied —
       treat the output as a preliminary statement and consult a tax professional.
       Read-only: the tool never asks for keys and never moves funds.
     </p>
