@@ -70,14 +70,14 @@ export async function ingestWallet(address, opts = {}) {
   }
 
   const corrected = await priceSanityGate(trades);
-  const lastFetched = ordered[Math.min(scanned, ordered.length) - 1];
+  const lastFetched = sigs[Math.min(scanned, sigs.length) - 1]; // sigs are newest-first
 
   return {
     trades,
     transfers,
     seen: scanned,
     corrected,
-    coverage: { fromTs: lastFetched?.blockTime ?? null, toTs: ordered[0]?.blockTime ?? null, scanned },
+    coverage: { fromTs: lastFetched?.blockTime ?? null, toTs: sigs[0]?.blockTime ?? null, scanned },
   };
 }
 
