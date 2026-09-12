@@ -69,7 +69,7 @@ export async function ingestWallet(address, opts = {}) {
     opts.onProgress?.({ scanned, trades: trades.length, budget: maxTx });
   }
 
-  const corrected = await priceSanityGate(trades);
+  const { corrected, ambiguous } = await priceSanityGate(trades);
   // sigs/trades arrive newest-first; FIFO relies on stable same-second order,
   // so hand the pipeline an oldest-first array
   trades.reverse();
@@ -80,7 +80,7 @@ export async function ingestWallet(address, opts = {}) {
     transfers,
     seen: scanned,
     corrected,
-    ambiguous: ambiguousCount,
+    ambiguous,
     coverage: { fromTs: lastFetched?.blockTime ?? null, toTs: sigs[0]?.blockTime ?? null, scanned },
   };
 }
