@@ -107,14 +107,26 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/jobs") {
     let body = "";
-    for await (const chunk of req) {
-      body += chunk;
-      if (body.length > 1024) {
-        const out = json(res, 413, { error: "payload too large" });
-        req.destroy(); // then stop the stream
-        return out;
+    // slow-body (slowloris) guard: the whole 1KB body must arrive in 15s
+    const bodyTimer = setTimeout(() => { try { req.destroy(); } catch {} }, 15_000);
+    let aborted = false;
+    try {
+      for await (const chunk of req) {
+        body += chunk;
+        if (body.length > 1024) {
+          clearTimeout(bodyTimer);
+          aborted = true;
+          const out = json(res, 413, { error: "payload too large" });
+          req.destroy(); // then stop the stream
+          return out;
+        }
       }
+    } catch {
+      aborted = true; // client vanished mid-body
+    } finally {
+      clearTimeout(bodyTimer);
     }
+    if (aborted) return;
     let address;
     try { address = JSON.parse(body).address; } catch { /* handled below */ }
     if (!ADDRESS_RE.test(address ?? "")) return json(res, 400, { error: "valid Solana address required" });
