@@ -57,6 +57,18 @@ test("sell spanning known and unknown basis splits cleanly", () => {
   assert.equal(r.unknownBasis[0].proceedsUsd, 200);
 });
 
+test("assumed variant adds market-valued unknowns on top of known P&L", () => {
+  const r = fifoBasis([
+    { side: "buy", qty: 10, valueUsd: 1000, ts: 1 },
+    { side: "sell", qty: 15, valueUsd: 1800, ts: 3, marketPx: 110 },
+  ]);
+  // known close: 10 lots cost 1000, proceeds 1200 → +200
+  // unknown 5 shares: proceeds 600, assumed basis 5×110 = 550 → +50
+  assert.equal(r.realizedUsd, 200);
+  assert.equal(r.realizedAssumed, 250);
+  assert.equal(r.unknownBasis.length, 1);
+});
+
 test("no trades -> zero everything", () => {
   const r = fifoBasis([]);
   assert.equal(r.realizedUsd, 0);

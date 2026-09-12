@@ -1,6 +1,6 @@
 # StockBasis
 
-Cost basis, P&L and tax-ready reports for tokenized equities on Solana.
+Cost basis and PCost basis, P&L and tax-ready reports for tokenized equities on Solana.L reports for tokenized equities on Solana.
 
 ![StockBasis report](docs/report.png)
 

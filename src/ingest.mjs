@@ -70,8 +70,15 @@ export async function ingestWallet(address, opts = {}) {
   }
 
   const corrected = await priceSanityGate(trades);
+  const lastFetched = ordered[Math.min(scanned, ordered.length) - 1];
 
-  return { trades, transfers, seen: scanned, corrected };
+  return {
+    trades,
+    transfers,
+    seen: scanned,
+    corrected,
+    coverage: { fromTs: lastFetched?.blockTime ?? null, toTs: ordered[0]?.blockTime ?? null, scanned },
+  };
 }
 
 const TX_CONCURRENCY = Number(process.env.INGEST_CONCURRENCY ?? 5);
@@ -128,7 +135,7 @@ async function fetchTx(s, opts = {}) {
 }
 
 /** Net token balance changes for the wallet in one transaction. */
-function tokenDeltas(meta, owner) {
+export function tokenDeltas(meta, owner) {
   const pre = new Map(meta.preTokenBalances?.map((b) => [key(b), b]) ?? []);
   const post = meta.postTokenBalances?.map((b) => [key(b), b]) ?? [];
   const out = [];
@@ -150,7 +157,9 @@ function tokenDeltas(meta, owner) {
   return out;
 
   function key(b) {
-    return `${b.mint}:${b.tokenAccount ?? b.address ?? ""}`;
+    // tokenBalances carry accountIndex (not a token account address) — two
+    // accounts of the same mint must stay distinct until we net per mint
+    return `${b.mint}:${b.accountIndex ?? b.tokenAccount ?? b.address ?? ""}`;
   }
   function num(a) {
     return a?.uiAmount ?? null;

@@ -61,7 +61,10 @@ async function poll(id) {
   for (;;) {
     const res = await fetch(`/api/jobs/${id}`);
     const job = await res.json();
-    if (job.status === "done") return render(job);
+    if (job.status === "done") {
+      lastJob = job;
+      return render(job);
+    }
     if (job.status === "error") throw new Error(job.error);
     $("progress-text").textContent = job.phase === "history"
       ? `Walking transaction history… ${job.progress} signatures`
@@ -90,7 +93,9 @@ function render(job) {
   const total = $("total");
   total.textContent = `${grand >= 0 ? "+" : "−"}$${Math.abs(grand).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
   total.className = `total-value ${grand >= 0 ? "pos" : "neg"}`;
-  $("total-sub").textContent = `${trades} closed trades · ${wins}W/${losses}L · ${tokens} stocks · wallet ${job.address.slice(0, 4)}…${job.address.slice(-4)}` + (showAssumed ? " · market-basis assumption ON" : "");
+  const cov = job.result.coverage;
+  const covTxt = cov?.fromTs ? ` · history ${day(cov.fromTs)} → ${day(cov.toTs)} (${cov.scanned.toLocaleString("en-US")} txs)` : "";
+  $("total-sub").textContent = `${trades} closed trades · ${wins}W/${losses}L · ${tokens} stocks · wallet ${job.address.slice(0, 4)}…${job.address.slice(-4)}` + covTxt + (showAssumed ? " · market-basis assumption ON" : "");
 
   const note = $("basis-note");
   const notes = [];
@@ -146,6 +151,12 @@ function render(job) {
 }
 
 let lastCloses = null;
+let lastJob = null;
+
+// the assumption toggle re-renders the last report without a rescan
+$("assume").addEventListener("change", () => {
+  if (lastJob?.result) render(lastJob);
+});
 
 $("csv").addEventListener("click", () => {
   if (!lastCloses?.length) return;

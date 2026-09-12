@@ -1,7 +1,7 @@
 {
   "name": "stockbasis",
   "version": "0.1.0",
-  "description": "Cost basis, P&L and tax-ready reports for tokenized equities on Solana",
+  "description": "Cost basis and P&L reports for tokenized equities on Solana",
   "type": "module",
   "license": "MIT",
   "engines": {

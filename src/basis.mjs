@@ -55,6 +55,7 @@ export function fifoBasis(trades) {
       const cost = (take / lot.qty) * lot.costUsd;
       const proceeds = take * perUnit;
       realizedUsd += proceeds - cost;
+      realizedAssumed += proceeds - cost; // assumed variant includes all known-basis P&L
       realizedBuyUsd += cost;
       closes.push({ acquiredTs: lot.ts, soldTs: t.ts, qty: take, costUsd: cost, proceedsUsd: proceeds, pnlUsd: proceeds - cost });
       lot.qty -= take;
