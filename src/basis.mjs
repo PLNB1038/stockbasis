@@ -119,6 +119,7 @@ export function fifoBasis(trades) {
 
     // sell: consume inventory oldest-first (known lots book closes, custody
     // deposits book unknown-basis disposals)
+    if (!(t.qty > 0) || !Number.isFinite(t.valueUsd)) continue; // degenerate, never book NaN
     const need = consumeOldest(t.qty, t.valueUsd / t.qty, t);
     if (need > 1e-9) {
       const proceeds = need * (t.valueUsd / t.qty);

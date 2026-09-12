@@ -89,6 +89,7 @@ async function poll(id, seq) {
 }
 
 function render(job) {
+  if (!job.result) return showError("Report unavailable — please run the scan again.");
   const { rows, totalRealized, tokens, unknownBasis } = job.result;
   lastResult = rows;
 
@@ -176,10 +177,10 @@ $("assume").addEventListener("change", () => {
 
 $("csv").addEventListener("click", () => {
   if (!lastCloses?.length) return;
-  const head = "symbol,acquired_date,sold_date,qty,proceeds_usd,cost_basis_usd,gain_usd";
+  const head = "symbol,mint,acquired_date,sold_date,qty,proceeds_usd,cost_basis_usd,gain_usd";
   const d = (ts) => (ts ? new Date(ts * 1000).toISOString().slice(0, 10) : "unknown");
   const lines = lastCloses.map((c) =>
-    [csvSafe(c.symbol), d(c.acquiredTs), d(c.soldTs), fmtQty(c.qty), c.proceedsUsd.toFixed(2), c.costUsd.toFixed(2), c.pnlUsd.toFixed(2)].join(",")
+    [csvSafe(c.symbol), csvSafe(c.mint), d(c.acquiredTs), d(c.soldTs), fmtQty(c.qty), c.proceedsUsd.toFixed(2), c.costUsd.toFixed(2), c.pnlUsd.toFixed(2)].join(",")
   );
   const blob = new Blob([head + "\n" + lines.join("\n")], { type: "text/csv" });
   const a = document.createElement("a");

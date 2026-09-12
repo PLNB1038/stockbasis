@@ -124,6 +124,17 @@ test("same-second trades order by slot, not array luck", () => {
   assert.equal(r.openQty, 10);
 });
 
+test("degenerate sells never poison the report with NaN", () => {
+  const r = fifoBasis([
+    { side: "buy", qty: 5, valueUsd: 500, ts: 1 },
+    { side: "sell", qty: 0, valueUsd: 100, ts: 2 }, // zero-qty dust event
+    { side: "sell", qty: 5, valueUsd: 600, ts: 3 },
+  ]);
+  assert.equal(r.realizedUsd, 100);
+  assert.equal(Number.isFinite(r.realizedAssumed), true);
+  assert.equal(r.openQty, 0);
+});
+
 test("no trades -> zero everything", () => {
   const r = fifoBasis([]);
   assert.equal(r.realizedUsd, 0);

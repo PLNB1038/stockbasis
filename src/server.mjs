@@ -210,5 +210,9 @@ async function marketStats() {
 process.on("uncaughtException", (e) => console.error("[stockbasis] swallowed:", String(e).slice(0, 120)));
 process.on("unhandledRejection", (e) => console.error("[stockbasis] swallowed rejection:", String(e).slice(0, 120)));
 
+// bound how long a client may take to send its (tiny) request body
+server.requestTimeout = 30_000;
+server.headersTimeout = 31_000;
+
 server.listen(PORT, () => console.log(`[stockbasis] http://localhost:${PORT} (scan budget: ${MAX_SCAN_TX} txs or ${TARGET_TRADES} stock trades)`));
 loadFeatured();
