@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { tokenDeltas, walletSolDelta, pairTrades } from "../src/ingest.mjs";
 import { primeTokenCache } from "../src/classify.mjs";
+import { primeSolDayCache } from "../src/price.mjs";
 
 const load = (name) =>
   JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
@@ -17,6 +18,10 @@ const load = (name) =>
 function asTx(fx) {
   return { meta: fx.meta, transaction: { message: { accountKeys: fx.accountKeys } } };
 }
+
+// deterministic SOL pricing for the fixture days (real mainnet price at capture)
+primeSolDayCache(1700000000, 102.39440297526501);
+primeSolDayCache(1700100000, 102.39440297526501);
 
 test("fixture usdc: NVDAx buy priced from SOL delta, fee excluded", async () => {
   const fx = load("usdc-5WsaLeLGPN.json");

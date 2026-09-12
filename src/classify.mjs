@@ -41,7 +41,7 @@ export async function lookupToken(mint) {
     }
     if (!res.ok) throw new Error(`Jupiter search HTTP ${res.status} for ${mint}`);
     const items = await res.json();
-    const t = items.find((x) => x.id === mint) ?? items[0] ?? null;
+    const t = items.find((x) => x.id === mint) ?? null; // never a lookalike from fuzzy search
     if (t) {
       const tags = t.tags ?? [];
       out = { symbol: t.symbol ?? "?", name: t.name ?? "", isStock: tags.some((x) => STOCK_TAGS.has(x)), tags };

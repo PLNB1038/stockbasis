@@ -11,9 +11,14 @@ let cached = null; // { usd, at }
 export async function solUsdOn(ts) {
   const day = new Date(ts * 1000).toISOString().slice(0, 10);
   if (dayCache.has(day)) return dayCache.get(day);
-  const usd = (await fromCoinGeckoHistory(day)) ?? (await solUsd());
-  dayCache.set(day, usd);
-  return usd;
+  const usd = await fromCoinGeckoHistory(day);
+  if (usd != null) dayCache.set(day, usd);
+  return usd; // null → caller must treat the cash leg as unpriced
+}
+
+/** Test hook: seed a known day price so fixtures stay deterministic. */
+export function primeSolDayCache(ts, usd) {
+  dayCache.set(new Date(ts * 1000).toISOString().slice(0, 10), usd);
 }
 
 async function fromCoinGeckoHistory(day) {
@@ -36,8 +41,8 @@ async function fromCoinGeckoHistory(day) {
 export async function solUsd() {
   if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached.usd;
 
-  const usd = (await fromCoinGecko()) ?? (await fromJupiter()) ?? 1;
-  cached = { usd, at: Date.now() };
+  const usd = (await fromCoinGecko()) ?? (await fromJupiter()); // null when both fail
+  if (usd != null) cached = { usd, at: Date.now() };
   return usd;
 }
 

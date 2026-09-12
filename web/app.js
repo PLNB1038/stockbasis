@@ -30,7 +30,7 @@ async function loadMarket() {
     if (!s.trackedTokens) return;
     const vol = s.volume24hUsd ? ` · $${compact(s.volume24hUsd)} traded in 24h` : "";
     const tops = (s.top ?? []).slice(0, 4).map((t) => t.symbol).join(" · ");
-    $("market").textContent = `${s.trackedTokens} tokenized equities tracked on Solana${vol}`;
+    $("market").textContent = `${s.trackedTokens} tokenized-equity pools tracked on Solana${vol}`;
     $("market").title = tops ? `Top pools: ${tops}` : "";
     $("market").hidden = false;
   } catch { /* strip is optional decoration */ }
@@ -67,6 +67,7 @@ async function poll(id, seq) {
     let job;
     try {
       const res = await fetch(`/api/jobs/${id}`);
+      if (!res.ok) throw new Error(res.status === 404 ? "Server restarted — please run the scan again." : `HTTP ${res.status}`);
       job = await res.json();
       flaky = 0;
     } catch {
@@ -195,7 +196,11 @@ const compact = (n) =>
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const fmt = (n) => `${n >= 0 ? "+" : "−"}${usd.format(Math.abs(n))}`;
 const fmtQty = (q) => Number(q.toFixed(6)).toString();
-const csvSafe = (s) => (/^[=+\-@]/.test(String(s).trimStart()) ? "'" + s : s);
+const csvSafe = (s) => {
+  let v = String(s);
+  if (/^[=+\-@]/.test(v.trimStart())) v = "'" + v;
+  return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+};
 const day = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 const dates = (r) => {
   if (!r.firstTs) return "";

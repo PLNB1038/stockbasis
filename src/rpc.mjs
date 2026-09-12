@@ -31,7 +31,17 @@ function endpoints(opts) {
  * @param {{rpcUrl?: string}} [opts]
  * @returns {Promise<any>} result field of the response
  */
-export async function rpc(method, params, opts = {}) {
+let rpcQueue = Promise.resolve();
+
+export function rpc(method, params, opts = {}) {
+  // serialize: every call reserves the next pacing slot, so concurrent
+  // callers cannot burst past the rate limit
+  const run = rpcQueue.then(() => rpcInner(method, params, opts));
+  rpcQueue = run.catch(() => {});
+  return run;
+}
+
+async function rpcInner(method, params, opts = {}) {
   const urls = endpoints(opts);
 
   for (let attempt = 0; ; attempt++) {

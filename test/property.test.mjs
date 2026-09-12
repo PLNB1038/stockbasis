@@ -15,58 +15,53 @@ function mulberry32(seed) {
   };
 }
 
-/** Reference FIFO via cumulative cost flows — deliberately different shape. */
+/** Reference FIFO — two-queue conservative model, written independently. */
 function referenceFifo(events) {
   const sorted = [...events].sort((a, b) => a.ts - b.ts);
-  // pool: array of [qtyRemaining, costRemaining] oldest-first, like the spec
-  const pool = [];
-  let realized = 0;
-  let assumed = 0;
-  let unknown = 0;
-  let closedQty = 0;
-  let closedCost = 0;
+  const known = [];  // [qty, cost, ts] known-basis lots, oldest-first
+  const unknown = []; // [qty, ts] custody deposits, oldest-first
+  let realized = 0, assumed = 0, unknownSold = 0;
+
+  // consume `need` units from whichever inventory is older
+  function consume(need, perUnit, bookPnl) {
+    let fromKnown = 0, fromUnknown = 0;
+    while (need > 1e-12) {
+      const k = known[0], u = unknown[0];
+      const kTs = k ? k[2] : Infinity, uTs = u ? u[1] : Infinity;
+      if (kTs === Infinity && uTs === Infinity) break;
+      if (uTs <= kTs) {
+        const take = Math.min(u[0], need);
+        u[0] -= take; fromUnknown += take; need -= take;
+        if (u[0] <= 1e-12) unknown.shift();
+      } else {
+        const take = Math.min(k[0], need);
+        const cost = (take / k[0]) * k[1]; // proportional — computed before qty changes
+        const pnl = take * perUnit - cost;
+        if (bookPnl) { realized += pnl; assumed += pnl; }
+        k[0] -= take; k[1] -= cost; fromKnown += take; need -= take;
+        if (k[0] <= 1e-12) known.shift();
+      }
+    }
+    return [fromKnown, fromUnknown];
+  }
 
   for (const e of sorted) {
-    if (e.side === "buy") { pool.push([e.qty, e.valueUsd]); continue; }
-    if (e.side === "in") continue;
-    if (e.side === "out") {
-      let need = e.qty;
-      while (need > 1e-12 && pool.length) {
-        const [q, c] = pool[0];
-        const take = Math.min(q, need);
-        pool[0][0] = q - take;
-        pool[0][1] = c - (take / q) * c;
-        need -= take;
-        if (pool[0][0] <= 1e-12) pool.shift();
-      }
-      continue;
-    }
+    if (e.side === "buy") { known.push([e.qty, e.valueUsd, e.ts]); continue; }
+    if (e.side === "in") { unknown.push([e.qty, e.ts]); continue; }
+    if (e.side === "out") { consume(e.qty, null, false); continue; }
     // sell
-    let need = e.qty;
     const perUnit = e.valueUsd / e.qty;
-    while (need > 1e-12 && pool.length) {
-      const [q, c] = pool[0];
-      const take = Math.min(q, need);
-      const pnl = take * perUnit - (take / q) * c;
-      realized += pnl;
-      assumed += pnl; // assumed variant includes all known-basis P&L
-      closedQty += take;
-      closedCost += (take / q) * c;
-      pool[0][0] = q - take;
-      pool[0][1] = c - (take / q) * c;
-      need -= take;
-      if (pool[0][0] <= 1e-12) pool.shift();
-    }
-    if (need > 1e-12) {
-      unknown += need;
-      if (Number.isFinite(e.marketPx) && e.marketPx > 0) {
-        assumed += need * perUnit - need * e.marketPx;
-      }
+    const [fK, fU] = consume(e.qty, perUnit, true);
+    const phantom = e.qty - fK - fU; // shares with no tracked inventory at all
+    const unknownPart = fU + phantom;
+    if (unknownPart > 1e-12) {
+      unknownSold += unknownPart;
+      const proceeds = unknownPart * perUnit;
+      if (Number.isFinite(e.marketPx) && e.marketPx > 0) assumed += proceeds - unknownPart * e.marketPx;
     }
   }
 
-  // exact pass for out-cost removal (proportional across oldest lots)
-  return { realized, assumed, unknown, closedQty, closedCost, openQty: pool.reduce((s, [q]) => s + q, 0), openCost: pool.reduce((s, [, c]) => s + c, 0) };
+  return { realized, assumed, unknown: unknownSold, closedCost: 0, openQty: known.reduce((s, [q]) => s + q, 0), openCost: known.reduce((s, [, c]) => s + c, 0) };
 }
 
 function randomEvents(rnd, n) {

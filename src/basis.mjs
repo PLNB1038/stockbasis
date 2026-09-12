@@ -31,6 +31,8 @@ export function fifoBasis(trades) {
   const sorted = [...trades].sort((a, b) => a.ts - b.ts);
   /** @type {Array<{qty:number, costUsd:number, ts:number}>} */
   const lots = [];
+  /** @type {Array<{qty:number, ts:number}>} deposited shares whose basis is unknowable */
+  const unknownQ = [];
   /** @type {BasisResult["closes"]} */
   const closes = [];
   /** @type {Array<{ts:number, qty:number, proceedsUsd:number}>} */
@@ -39,53 +41,85 @@ export function fifoBasis(trades) {
   let realizedBuyUsd = 0;
   let realizedAssumed = 0;
 
+  // a disposal consumes whichever inventory is older — known lots or earlier
+  // custody deposits. Deposits-first is the conservative reading: when the
+  // chain cannot say which shares were sold, profit is not invented.
+  const consumeOldest = (need, perUnit, t) => {
+    while (need > 1e-9) {
+      const lot = lots[0];
+      const unk = unknownQ[0];
+      const lotTs = lot ? lot.ts : Infinity;
+      const unkTs = unk ? unk.ts : Infinity;
+      if (lotTs === Infinity && unkTs === Infinity) break;
+      if (unkTs <= lotTs) {
+        const take = Math.min(unk.qty, need);
+        const proceeds = take * perUnit;
+        unknownBasis.push({ soldTs: t.ts, qty: take, proceedsUsd: proceeds });
+        if (Number.isFinite(t.marketPx) && t.marketPx > 0) {
+          realizedAssumed += proceeds - take * t.marketPx;
+        }
+        unk.qty -= take;
+        need -= take;
+        if (unk.qty <= 1e-9) unknownQ.shift();
+      } else {
+        const take = Math.min(lot.qty, need);
+        const cost = (take / lot.qty) * lot.costUsd;
+        const proceeds = take * perUnit;
+        realizedUsd += proceeds - cost;
+        realizedAssumed += proceeds - cost; // assumed variant includes all known-basis P&L
+        realizedBuyUsd += cost;
+        closes.push({ acquiredTs: lot.ts, soldTs: t.ts, qty: take, costUsd: cost, proceedsUsd: proceeds, pnlUsd: proceeds - cost });
+        lot.qty -= take;
+        lot.costUsd -= cost;
+        need -= take;
+        if (lot.qty <= 1e-9) lots.shift();
+      }
+    }
+    return need;
+  };
+
   for (const t of sorted) {
     if (t.side === "buy") {
       lots.push({ qty: t.qty, costUsd: t.valueUsd, ts: t.ts });
       continue;
     }
 
-    // withdrawal: the basis leaves the wallet with the tokens — consume lots
-    // oldest-first with no proceeds and no P&L (a custody deposit-back, gift
-    // out, or venue transfer is a movement, not a disposal)
+    // withdrawal: basis leaves the wallet with the tokens — consume whichever
+    // inventory is older, no proceeds, no P&L (a movement, not a disposal)
     if (t.side === "out") {
       let need = t.qty;
-      while (need > 1e-9 && lots.length) {
+      while (need > 1e-9) {
         const lot = lots[0];
-        const take = Math.min(lot.qty, need);
-        const cost = (take / lot.qty) * lot.costUsd;
-        lot.qty -= take;
-        lot.costUsd -= cost;
-        need -= take;
-        if (lot.qty <= 1e-9) lots.shift();
+        const unk = unknownQ[0];
+        const lotTs = lot ? lot.ts : Infinity;
+        const unkTs = unk ? unk.ts : Infinity;
+        if (lotTs === Infinity && unkTs === Infinity) break;
+        if (unkTs <= lotTs) {
+          const take = Math.min(unk.qty, need);
+          unk.qty -= take;
+          need -= take;
+          if (unk.qty <= 1e-9) unknownQ.shift();
+        } else {
+          const take = Math.min(lot.qty, need);
+          const cost = (take / lot.qty) * lot.costUsd;
+          lot.qty -= take;
+          lot.costUsd -= cost;
+          need -= take;
+          if (lot.qty <= 1e-9) lots.shift();
+        }
       }
       continue;
     }
-    if (t.side === "in") continue; // custody deposit: arrives with unknown basis
-
-    // sell: consume lots oldest-first, one close row per lot consumed
-    // (brokerage 1099-B style: each disposal names its acquisition date)
-    let need = t.qty;
-    const perUnit = t.valueUsd / t.qty;
-    while (need > 1e-9 && lots.length) {
-      const lot = lots[0];
-      const take = Math.min(lot.qty, need);
-      const cost = (take / lot.qty) * lot.costUsd;
-      const proceeds = take * perUnit;
-      realizedUsd += proceeds - cost;
-      realizedAssumed += proceeds - cost; // assumed variant includes all known-basis P&L
-      realizedBuyUsd += cost;
-      closes.push({ acquiredTs: lot.ts, soldTs: t.ts, qty: take, costUsd: cost, proceedsUsd: proceeds, pnlUsd: proceeds - cost });
-      lot.qty -= take;
-      lot.costUsd -= cost;
-      need -= take;
-      if (lot.qty <= 1e-9) lots.shift();
+    if (t.side === "in") {
+      unknownQ.push({ qty: t.qty, ts: t.ts });
+      continue;
     }
 
-    // shares sold without known lots (acquired before the scanned history, or
-    // deposited from custody) have unknown basis — excluded from strict P&L
+    // sell: consume inventory oldest-first (known lots book closes, custody
+    // deposits book unknown-basis disposals)
+    const need = consumeOldest(t.qty, t.valueUsd / t.qty, t);
     if (need > 1e-9) {
-      const proceeds = need * perUnit;
+      const proceeds = need * (t.valueUsd / t.qty);
       unknownBasis.push({ soldTs: t.ts, qty: need, proceedsUsd: proceeds });
       if (Number.isFinite(t.marketPx) && t.marketPx > 0) {
         realizedAssumed += proceeds - need * t.marketPx;
@@ -95,7 +129,8 @@ export function fifoBasis(trades) {
 
   const openQty = lots.reduce((s, l) => s + l.qty, 0);
   const openCostUsd = lots.reduce((s, l) => s + l.costUsd, 0);
-  return { realizedUsd, realizedAssumed, realizedBuyUsd, closes, unknownBasis, openLots: lots, openQty, openCostUsd };
+  const openUnknownQty = unknownQ.reduce((s, u) => s + u.qty, 0);
+  return { realizedUsd, realizedAssumed, realizedBuyUsd, closes, unknownBasis, openLots: lots, openQty, openCostUsd, openUnknownQty };
 }
 
 /**

@@ -104,9 +104,12 @@ async function priceSanityGate(trades) {
     for (const p of pairs ?? []) {
       const base = p.baseToken?.address;
       const px = Number(p.priceUsd);
+      const liq = p.liquidity?.usd ?? 0;
       if (!base || !Number.isFinite(px) || px <= 0) continue;
-      if (!prices.has(base) || (p.liquidity?.usd ?? 0) > 0) prices.set(base, px);
+      const prev = prices.get(base);
+      if (!prev || liq > prev.liq) prices.set(base, { px, liq });
     }
+    for (const [base, v] of prices) prices.set(base, v.px);
   } catch {
     return { corrected: 0, ambiguous: 0 }; // no market data — leave trades as paired
   }
@@ -175,6 +178,11 @@ export function tokenDeltas(meta, owner) {
     return `${b.mint}:${b.accountIndex ?? b.tokenAccount ?? b.address ?? ""}`;
   }
   function num(a) {
+    const s = a?.uiAmountString;
+    if (s != null) {
+      const v = Number(s);
+      if (Number.isFinite(v)) return v;
+    }
     return a?.uiAmount ?? null;
   }
 }
@@ -213,11 +221,16 @@ export async function pairTrades(deltas, ctx, trades, transfers) {
 
   const needsSolPrice = cash.some((c) => c.mint === WSOL) || Math.abs(ctx.solDelta ?? 0) > 1e-9;
   const solPrice = needsSolPrice ? await solUsdOn(ctx.ts) : 1;
+  if (needsSolPrice && !Number.isFinite(solPrice)) {
+    // no price source available: a movement without a value, never a $1 guess
+    for (const e of equity) transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
+    return;
+  }
   const cashUsd = (c) => (c.mint === WSOL ? Math.abs(c.delta) * solPrice : Math.abs(c.delta));
 
-  // one cash leg cannot honestly price two equity movements (bundle/route) —
-  // record them as transfers rather than invent a split
-  if (equity.length > 1 && cash.length !== equity.length) {
+  // a multi-stock bundle cannot be decomposed from deltas alone — no greedy
+  // guessing which cash leg paid for which share: record all as movements
+  if (equity.length > 1) {
     for (const e of equity) transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
     return;
   }
