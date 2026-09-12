@@ -101,6 +101,18 @@ test("custody deposit creates no lot — its sale is unknown-basis", () => {
   assert.equal(r.openQty, 0);
 });
 
+test("float dust: exact-position close leaves no residual lot", () => {
+  const r = fifoBasis([
+    { side: "buy", qty: 0.3, valueUsd: 60, ts: 1 },
+    { side: "buy", qty: 0.2, valueUsd: 50, ts: 2 },
+    { side: "sell", qty: 0.3, valueUsd: 75, ts: 3 }, // 0.3 - 0.2 - 0.1 territory
+    { side: "sell", qty: 0.2, valueUsd: 60, ts: 4 },
+  ]);
+  assert.equal(r.openQty, 0); // no 1e-16 residue hanging in openLots
+  assert.equal(r.openLots.length, 0);
+  assert.equal(r.openCostUsd, 0);
+});
+
 test("no trades -> zero everything", () => {
   const r = fifoBasis([]);
   assert.equal(r.realizedUsd, 0);

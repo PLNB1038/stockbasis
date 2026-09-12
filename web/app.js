@@ -61,10 +61,19 @@ $("scan").addEventListener("submit", async (e) => {
 });
 
 async function poll(id, seq) {
+  let flaky = 0; // tolerate brief network blips during a long scan
   for (;;) {
     if (seq !== pollSeq) return; // superseded by a newer scan
-    const res = await fetch(`/api/jobs/${id}`);
-    const job = await res.json();
+    let job;
+    try {
+      const res = await fetch(`/api/jobs/${id}`);
+      job = await res.json();
+      flaky = 0;
+    } catch {
+      if (++flaky > 5) throw new Error("Network error — please scan again.");
+      await new Promise((r) => setTimeout(r, 2000 * flaky));
+      continue;
+    }
     if (job.status === "done") {
       lastJob = job;
       return render(job);
