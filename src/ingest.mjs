@@ -238,7 +238,16 @@ async function pairTrades(deltas, ctx, trades, transfers) {
         });
         continue;
       }
-      transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
+      // no cash involved: a withdrawal/deposit moves basis with the tokens.
+      // Outgoing stock consumes open lots (no P&L); incoming creates none.
+      trades.push({
+        side: e.delta < 0 ? "out" : "in",
+        mint: e.mint,
+        qty: Math.abs(e.delta),
+        valueUsd: 0,
+        ts: ctx.ts,
+        signature: ctx.signature,
+      });
       continue;
     }
     const valueUsd = legs.reduce((s, c) => s + cashUsd(c), 0);

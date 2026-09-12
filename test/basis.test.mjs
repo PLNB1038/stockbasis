@@ -80,6 +80,27 @@ test("same-second trades keep oldest-first order (stable sort contract)", () => 
   assert.equal(r.openQty, 4);
 });
 
+test("withdrawal consumes lots without P&L, keeping books in sync with the chain", () => {
+  const r = fifoBasis([
+    { side: "buy", qty: 10, valueUsd: 1000, ts: 1 },
+    { side: "out", qty: 6, valueUsd: 0, ts: 2 }, // withdrawn to a venue
+    { side: "sell", qty: 4, valueUsd: 500, ts: 3 },
+  ]);
+  assert.equal(r.openQty, 0); // nothing left on the wallet
+  assert.equal(r.realizedUsd, 100); // only the on-chain sale: 500 − 400
+  assert.equal(r.closes.length, 1);
+});
+
+test("custody deposit creates no lot — its sale is unknown-basis", () => {
+  const r = fifoBasis([
+    { side: "in", qty: 10, valueUsd: 0, ts: 1 }, // deposited from an exchange
+    { side: "sell", qty: 10, valueUsd: 500, ts: 2 },
+  ]);
+  assert.equal(r.realizedUsd, 0); // basis unknown — excluded, not invented
+  assert.equal(r.unknownBasis.length, 1);
+  assert.equal(r.openQty, 0);
+});
+
 test("no trades -> zero everything", () => {
   const r = fifoBasis([]);
   assert.equal(r.realizedUsd, 0);

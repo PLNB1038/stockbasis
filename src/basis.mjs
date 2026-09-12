@@ -2,7 +2,7 @@
 
 /**
  * @typedef {Object} Trade
- * @property {"buy"|"sell"} side
+ * @property {"buy"|"sell"|"out"|"in"} side   // out/in = withdrawals/deposits without cash leg
  * @property {number} qty        // units of the stock token
  * @property {number} valueUsd   // cash value of the whole trade (stablecoin leg)
  * @property {number} ts         // unix seconds
@@ -44,6 +44,24 @@ export function fifoBasis(trades) {
       lots.push({ qty: t.qty, costUsd: t.valueUsd, ts: t.ts });
       continue;
     }
+
+    // withdrawal: the basis leaves the wallet with the tokens — consume lots
+    // oldest-first with no proceeds and no P&L (a custody deposit-back, gift
+    // out, or venue transfer is a movement, not a disposal)
+    if (t.side === "out") {
+      let need = t.qty;
+      while (need > 1e-9 && lots.length) {
+        const lot = lots[0];
+        const take = Math.min(lot.qty, need);
+        const cost = (take / lot.qty) * lot.costUsd;
+        lot.qty -= take;
+        lot.costUsd -= cost;
+        need -= take;
+        if (lot.qty <= 1e-9) lots.shift();
+      }
+      continue;
+    }
+    if (t.side === "in") continue; // custody deposit: arrives with unknown basis
 
     // sell: consume lots oldest-first, one close row per lot consumed
     // (brokerage 1099-B style: each disposal names its acquisition date)
@@ -97,7 +115,7 @@ export function perStockSummary(tradesByMint, meta) {
       mint,
       symbol: m.symbol,
       name: m.name,
-      trades: trades.length,
+      trades: trades.filter((t) => t.side === "buy" || t.side === "sell").length,
       buys: trades.filter((t) => t.side === "buy").length,
       sells: trades.filter((t) => t.side === "sell").length,
       wins,
