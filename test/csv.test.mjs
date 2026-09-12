@@ -55,3 +55,21 @@ test("csv neutralizes spreadsheet formula injection", () => {
     assert.ok(!/^[=+@]/.test(first), `unsafe CSV cell: ${first}`);
   }
 });
+
+test("negative numbers stay numeric (no formula-guard apostrophe)", () => {
+  const csv = toCsv([
+    { symbol: "TSLAx", mint: "M", acquiredTs: 1, soldTs: 2, qty: 0.743964, proceedsUsd: 271.81, costUsd: 273.75, pnlUsd: -1.94 },
+  ]);
+  const row = parseCsv(csv)[1];
+  assert.equal(row[7], "-1.94"); // no leading apostrophe on negative P&L
+  assert.equal(row[5], "271.81");
+  assert.ok(!Number.isNaN(Number(row[7])), "gain_usd must parse as a number");
+});
+
+test("minus-prefixed text still gets the injection guard", () => {
+  const csv = toCsv([
+    { symbol: "-1+1", mint: "M", acquiredTs: 1, soldTs: 2, qty: 1, proceedsUsd: 1, costUsd: 1, pnlUsd: 0 },
+  ]);
+  const first = parseCsv(csv)[1][0];
+  assert.ok(first.startsWith("'-"), `unsafe CSV cell: ${first}`);
+});

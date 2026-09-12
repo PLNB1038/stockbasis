@@ -39,16 +39,19 @@ const precomputed = new Map(); // address -> job-shaped result
 let featuredAddresses = [];
 
 async function precomputeFeatured() {
+  const fresh = new Map();
   for (const address of featuredAddresses) {
     try {
       // landing-page wallets get the deep scan: no UI is waiting on them,
       // and full history means real cost basis instead of "unknown" rows
       const { trades, coverage, ambiguous, transfers: tfs } = await ingestWallet(address, { maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900 });
-      precomputed.set(address, { ...(await buildReport(trades)), coverage, ambiguous, transfersCount: tfs.length });
+      fresh.set(address, { ...(await buildReport(trades)), coverage, ambiguous, transfersCount: tfs.length });
     } catch (e) {
       console.error(`[stockbasis] precompute ${address.slice(0, 8)} failed: ${String(e?.message ?? e).slice(0, 80)}`);
     }
   }
+  precomputed.clear();
+  for (const [k, v] of fresh) precomputed.set(k, v);
 }
 
 async function loadFeatured() {

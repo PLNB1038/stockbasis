@@ -3,6 +3,8 @@
 const $ = (id) => document.getElementById(id);
 let lastResult = null;
 let lastAddress = null;
+let lastCloses = null;
+let lastJob = null;
 
 loadFeatured();
 loadMarket();
@@ -13,7 +15,7 @@ async function loadFeatured() {
     if (!list.length) return;
     $("featured").hidden = false;
     $("featured-list").innerHTML = list.map((f) =>
-      `<button class="featured" data-addr="${f.address}"><b>${esc(f.label)}</b><span>${f.address.slice(0, 4)}…${f.address.slice(-4)}</span></button>`
+      `<button class="featured" data-addr="${esc(f.address)}"><b>${esc(f.label)}</b><span>${f.address.slice(0, 4)}…${f.address.slice(-4)}</span></button>`
     ).join("");
     for (const btn of document.querySelectorAll(".featured")) {
       btn.addEventListener("click", () => {
@@ -167,9 +169,6 @@ function render(job) {
   show("report");
 }
 
-let lastCloses = null;
-let lastJob = null;
-
 // the assumption toggle re-renders the last report without a rescan
 $("assume").addEventListener("change", () => {
   if (lastJob?.result) render(lastJob);
@@ -199,7 +198,9 @@ const fmt = (n) => `${n >= 0 ? "+" : "−"}${usd.format(Math.abs(n))}`;
 const fmtQty = (q) => Number(q.toFixed(6)).toString();
 const csvSafe = (s) => {
   let v = String(s);
-  if (/^[=+\-@]/.test(v.trimStart())) v = "'" + v;
+  // pure numbers stay numeric even when negative — a leading apostrophe
+  // would turn P&L values into text in spreadsheets
+  if (!/^-?\d+(\.\d+)?$/.test(v) && /^[=+\-@]/.test(v.trimStart())) v = "'" + v;
   return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
 };
 const day = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
