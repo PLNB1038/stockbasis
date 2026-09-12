@@ -20,3 +20,4 @@ secrets/
 Thumbs.db
 .vscode/
 .idea/
+chaos*.log
