@@ -73,6 +73,7 @@ form { display: flex; gap: 10px; margin: 34px 0 8px; }
 .total-value { font-size: 42px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .total-sub { color: var(--muted); font-size: 14px; margin-left: 10px; }
 
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; }
 table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 th, td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--line); }
 th { color: var(--muted); font-size: 12.5px; text-transform: uppercase; letter-spacing: .06em; }
@@ -90,3 +91,14 @@ tr:last-child td { border-bottom: 0; }
 .actions a { color: var(--accent); text-decoration: none; font-size: 14px; }
 
 .disclaimer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
+
+@media (max-width: 540px) {
+  main { padding: 32px 14px 60px; }
+  .logo { font-size: 28px; }
+  .tagline { font-size: 16px; }
+  form { flex-direction: column; }
+  #go { width: 100%; padding: 14px; }
+  th, td { padding: 10px 11px; }
+  .total-value { font-size: 32px; }
+  #address { min-width: 0; width: 100%; }
+}
