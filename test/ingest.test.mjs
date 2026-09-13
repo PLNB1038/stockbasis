@@ -5,6 +5,13 @@ import { fifoBasis } from "../src/basis.mjs";
 import { primeTokenCache } from "../src/classify.mjs";
 import { primeSolDayCache } from "../src/price.mjs";
 
+// offline determinism: seed cash-leg tokens so no test ever touches Jupiter
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const WSOL_MINT = "So11111111111111111111111111111111111111112";
+primeTokenCache(USDC_MINT, { symbol: "USDC", name: "", isStock: false, tags: [] });
+primeTokenCache(WSOL_MINT, { symbol: "WSOL", name: "", isStock: false, tags: [] });
+process.env.STOCKBASIS_NO_MARKET ??= "1"; // no live market lookup in tests
+
 const TSLAX = "XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB"; // curated → no network
 const OTHERX = "StockMint2222222222222222222222222222222222";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";

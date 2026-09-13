@@ -129,6 +129,8 @@ export function applySanityGate(trades, prices, now) {
 
 async function priceSanityGate(trades) {
   if (!trades.length) return { corrected: 0, ambiguous: 0 };
+  // offline test hook: skip live market lookup entirely
+  if (process.env.STOCKBASIS_NO_MARKET === "1") return { corrected: 0, ambiguous: 0 };
   const mints = [...new Set(trades.map((t) => t.mint))];
   let prices;
   try {

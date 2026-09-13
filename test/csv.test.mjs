@@ -73,3 +73,21 @@ test("minus-prefixed text still gets the injection guard", () => {
   const first = parseCsv(csv)[1][0];
   assert.ok(first.startsWith("'-"), `unsafe CSV cell: ${first}`);
 });
+
+test("quantities carry no raw float artifacts", () => {
+  const csv = toCsv([
+    { symbol: "T", mint: "M", acquiredTs: 1, soldTs: 2, qty: 0.1 + 0.2, proceedsUsd: 1, costUsd: 1, pnlUsd: 0 },
+  ]);
+  assert.ok(!csv.includes("0.30000000000000004"), `float dust leaked: ${csv}`);
+  assert.ok(/(^|,|")0\.3(,|$)/.test(csv), `qty not normalized: ${csv}`);
+});
+
+test("carriage return inside a symbol stays one field", () => {
+  const csv = toCsv([
+    { symbol: "X\rY", mint: "M", acquiredTs: 1, soldTs: 2, qty: 1, proceedsUsd: 1, costUsd: 1, pnlUsd: 0 },
+  ]);
+  const rows = parseCsv(csv);
+  assert.equal(rows.length, 2); // header + ONE record — \r must not split it
+  assert.equal(rows[1].length, 8);
+  assert.equal(rows[1][0], "X\rY");
+});

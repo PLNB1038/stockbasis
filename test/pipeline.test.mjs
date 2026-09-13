@@ -12,6 +12,13 @@ import { ingestWallet } from "../src/ingest.mjs";
 import { buildReport } from "../src/report.mjs";
 import { primeTokenCache } from "../src/classify.mjs";
 
+// offline determinism: seed cash-leg tokens so no test ever touches Jupiter
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const WSOL_MINT = "So11111111111111111111111111111111111111112";
+primeTokenCache(USDC_MINT, { symbol: "USDC", name: "", isStock: false, tags: [] });
+primeTokenCache(WSOL_MINT, { symbol: "WSOL", name: "", isStock: false, tags: [] });
+process.env.STOCKBASIS_NO_MARKET ??= "1"; // no live market lookup in tests
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OWNER = "Aaaa1111111111111111111111111111111111111111"; // base58-shaped
 const TSLAX = "XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB"; // curated — no Jupiter calls
@@ -167,7 +174,13 @@ test("server: static guards and the full scan flow over a fake chain", async () 
   const base = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ["src/server.mjs"], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port), SOLANA_RPC: fake.url, STOCKBASIS_NO_FEATURED: "1" },
+    env: {
+      ...process.env, // carries STOCKBASIS_NO_MARKET from this file's offline block
+      PORT: String(port),
+      SOLANA_RPC: fake.url,
+      STOCKBASIS_NO_FEATURED: "1",
+      JUP_SEARCH_URL: `${fake.url}/search`, // non-array answer → cached no-data, no live network
+    },
     stdio: ["ignore", "ignore", "ignore"],
   });
   // wait for listen()
@@ -249,6 +262,29 @@ test("ingest: a sustained RPC failure fails the scan instead of skipping transac
     await assert.rejects(ingestWallet(OWNER, { rpcUrl: `http://127.0.0.1:${broken.address().port}` }), /HTTP 400|scan/i);
   } finally {
     broken.close();
+  }
+});
+
+test("classify: a fuzzy-search lookalike never replaces the exact mint", async () => {
+  const mint = "Looka1ikeMint11111111111111111111111111111111";
+  const srv = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    // a decoy sits first in the response; only an exact id match counts
+    res.end(JSON.stringify([
+      { id: "Decoy111111111111111111111111111111111111111", symbol: "FAKE", name: "", tags: ["stocks"] },
+      { id: mint, symbol: "REAL", name: "", tags: ["stocks"] },
+    ]));
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  process.env.JUP_SEARCH_URL = `http://127.0.0.1:${srv.address().port}/search`;
+  try {
+    const fresh = await import(`../src/classify.mjs?lookalike=${Date.now()}`);
+    const meta = await fresh.lookupToken(mint);
+    assert.equal(meta?.symbol, "REAL");
+    assert.equal(meta?.isStock, true);
+  } finally {
+    delete process.env.JUP_SEARCH_URL;
+    srv.close();
   }
 });
 
