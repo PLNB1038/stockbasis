@@ -163,7 +163,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" || req.method === "HEAD") {
     const file = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
     const target = path.normalize(path.join(webDir, file));
-    if (!target.startsWith(webDir)) return json(res, 403, { error: "forbidden" });
+    if (target !== webDir && !target.startsWith(webDir + path.sep)) return json(res, 403, { error: "forbidden" });
     try {
       const data = await readFile(target);
       const type = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml" }[path.extname(target)] ?? "application/octet-stream";
