@@ -17,6 +17,9 @@ const curated = (() => {
 
 const cache = new Map(); // mint -> { symbol, name, isStock, tags }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// token metadata is attacker-controllable: strip control characters at the
+// source so they never reach terminals, CSV files or API consumers
+const clean = (s) => String(s ?? "").replace(/[\u0000-\u001F\u007F]/g, "");
 
 /**
  * Look up token metadata and stock classification for a mint.
@@ -27,7 +30,7 @@ export async function lookupToken(mint) {
   if (cache.has(mint)) return cache.get(mint);
 
   if (curated[mint]) {
-    const out = { symbol: curated[mint].symbol, name: curated[mint].name, isStock: true, tags: ["curated"] };
+    const out = { symbol: clean(curated[mint].symbol), name: clean(curated[mint].name), isStock: true, tags: ["curated"] };
     cache.set(mint, out);
     return out;
   }
@@ -46,7 +49,7 @@ export async function lookupToken(mint) {
     const t = (Array.isArray(items) ? items.find((x) => x.id === mint) : undefined) ?? null;
     if (t) {
       const tags = t.tags ?? [];
-      out = { symbol: t.symbol ?? "?", name: t.name ?? "", isStock: tags.some((x) => STOCK_TAGS.has(x)), tags };
+      out = { symbol: clean(t.symbol ?? "?"), name: clean(t.name ?? ""), isStock: tags.some((x) => STOCK_TAGS.has(x)), tags };
     }
     break;
   }
@@ -57,7 +60,7 @@ export async function lookupToken(mint) {
 
 /** Test hook: seed the cache so fixture tests never touch the network. */
 export function primeTokenCache(mint, meta) {
-  cache.set(mint, meta);
+  cache.set(mint, { ...meta, symbol: clean(meta?.symbol), name: clean(meta?.name) });
 }
 
 /** Stablecoins we treat as the cash leg of a trade (mint addresses verified on-chain). */

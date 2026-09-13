@@ -72,6 +72,7 @@ export async function buildReconciledReport(address, trades) {
     qty: Math.abs(a.diff),
     valueUsd: 0,
     ts: now,
+    slot: Number.MAX_SAFE_INTEGER, // after any real trade in the same second — never rewrite computed FIFO
     signature: "chain-reconcile",
   }));
   const rebuilt = await buildReport([...trades, ...synthetic]);

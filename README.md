@@ -70,9 +70,12 @@ include public mirrors); `INGEST_MAX_SCAN_TX`, `INGEST_TARGET_TRADES`,
 
 ## Status
 
-Working end to end on mainnet. Known simplifications: address validation is a
-base58 shape check; WSOL cash legs are priced per day; a new tokenized ticker
-appears in reports as soon as Jupiter tags it, with a curated list as fallback.
+Working end to end on mainnet. Interactive scans cover a recent window of
+activity (budget-capped); every report shows the exact window and transaction
+count it covers, so treat it as a preliminary statement for that window. Known
+simplifications: address validation is a base58 shape check; WSOL cash legs
+are priced per day; a new tokenized ticker appears in reports as soon as
+Jupiter tags it, with a curated list as fallback.
 
 ## Tests
 

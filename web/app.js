@@ -120,7 +120,7 @@ function render(job) {
   if (unknownBasis > 0 && !showAssumed) notes.push(`${unknownBasis} disposal${unknownBasis > 1 ? "s" : ""} with unknown cost basis (bought before the scanned history, or deposited from custody) excluded from P&L — tick the box above to assume market price.`);
   if ((job.result.priceCorrections ?? 0) > 0) notes.push(`${job.result.priceCorrections} recent trade${job.result.priceCorrections > 1 ? "s" : ""} valued at market price (cash leg ambiguous in an aggregated route).`);
   if ((job.result.ambiguous ?? 0) > 0) notes.push(`${job.result.ambiguous} older trade${job.result.ambiguous > 1 ? "s" : ""} excluded from P&L as ambiguous (aggregated route, no reliable historical price — the shares still left the inventory).`);
-  if ((job.result.reconciled ?? 0) > 0) notes.push(`${job.result.reconciled} open position${job.result.reconciled > 1 ? "s" : ""} reconciled to on-chain balances (some movements were not retrievable from public RPC).`);
+  if ((job.result.reconciled ?? 0) > 0) notes.push(`${job.result.reconciled} position${job.result.reconciled > 1 ? "s" : ""} from the scanned window reconciled to on-chain balances (some movements were not retrievable from public RPC).`);
   if ((job.result.reconcileFailed ?? 0) > 0) notes.push(`On-chain balance unavailable for ${job.result.reconcileFailed} token${job.result.reconcileFailed > 1 ? "s" : ""} — those positions are shown as scanned.`);
   if (notes.length) {
     note.textContent = notes.join(" ");
@@ -203,7 +203,7 @@ const csvSafe = (s) => {
   // pure numbers stay numeric even when negative — a leading apostrophe
   // would turn P&L values into text in spreadsheets
   if (!/^-?\d+(\.\d+)?$/.test(v) && /^[=+\-@]/.test(v.trimStart())) v = "'" + v;
-  return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
 };
 const day = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" });
 const dates = (r) => {

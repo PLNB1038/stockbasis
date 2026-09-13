@@ -50,7 +50,8 @@ export async function ingestWallet(address, opts = {}) {
     if (scanned >= maxTx || trades.length >= target || Date.now() - started > timeBudgetMs) break;
 
     const chunk = sigs.slice(i, i + TX_CONCURRENCY);
-    const txs = await Promise.all(chunk.map((s) => fetchTx(s, opts).catch(() => null)));
+    // no .catch here: a sustained RPC failure must reject the scan, not skip txs
+    const txs = await Promise.all(chunk.map((s) => fetchTx(s, opts)));
 
     for (let j = 0; j < chunk.length; j++) {
       const tx = txs[j];
@@ -150,17 +151,17 @@ async function priceSanityGate(trades) {
   return applySanityGate(trades, prices, Date.now() / 1000);
 }
 
-/** Fetch one parsed transaction; null only when every mirror truly lacks it. */
+/** Fetch one parsed transaction; null ONLY when every mirror truly lacks it. */
 async function fetchTx(s, opts = {}) {
-  // a silently skipped tx is an invisible hole in the wallet's history, so a
-  // transient network failure gets one retry — but no more: rpc() already
-  // retries internally, and stacked retry loops could stall a scan for minutes
+  // a genuinely missing tx (-32020 on all mirrors) is a hole in the data and
+  // skips quietly; any SUSTAINED rpc failure instead fails the whole scan —
+  // a silently incomplete report is worse than an honest "try again"
   for (let attempt = 0; ; attempt++) {
     try {
       return await rpc("getTransaction", [s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], opts);
     } catch (e) {
-      if (e instanceof RpcError && e.code === -32020) return null; // no endpoint has it
-      if (attempt >= 1) return null;
+      if (e instanceof RpcError && e.code === -32020) return null;
+      if (attempt >= 1) throw e;
     }
   }
 }

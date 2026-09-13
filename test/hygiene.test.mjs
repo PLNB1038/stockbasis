@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { STABLES, lookupToken } from "../src/classify.mjs";
+import { STABLES, lookupToken, primeTokenCache } from "../src/classify.mjs";
 import { WSOL } from "../src/ingest.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -91,6 +91,16 @@ test("no dead exports: every exported symbol is referenced outside its own file"
     }
   }
   assert.deepEqual(dead, [], "exports nobody imports — dead code or a stale facade; delete or wire it up");
+});
+
+test("token metadata is stripped of control characters at the source", async () => {
+  // a hostile mint can put terminal escapes and line breaks into its metadata;
+  // they must never reach terminals, CSV files or API consumers
+  const mint = "MetaMint111111111111111111111111111111111111";
+  primeTokenCache(mint, { symbol: "A\x1b[2JB", name: "x\r\ny", isStock: true, tags: [] });
+  const meta = await lookupToken(mint);
+  assert.equal(meta.symbol, "A[2JB"); // ESC gone: the terminal sequence is defanged
+  assert.equal(meta.name, "xy");
 });
 
 test("curated list classifies as stocks without any network", async () => {

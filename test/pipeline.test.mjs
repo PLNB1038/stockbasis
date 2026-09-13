@@ -224,6 +224,34 @@ test("web bundle parses — the duplicated-declaration class of bugs never ships
   assert.equal(r.status, 0, `app.js syntax error: ${r.stderr}`);
 });
 
+test("ingest: a sustained RPC failure fails the scan instead of skipping transactions", async () => {
+  const t = now();
+  const { sigs } = buildHistory([{ ts: t - HOUR, dTslax: 1.0, dUsdc: -250 }]);
+  // signatures answer fine, but every getTransaction gets a hard HTTP 400 —
+  // a provider outage must surface as a failed scan, never as a clean-looking
+  // report built on silently skipped transactions
+  const broken = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const { method } = JSON.parse(body);
+      if (method === "getSignaturesForAddress") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: sigs }));
+      } else {
+        res.writeHead(400);
+        res.end();
+      }
+    });
+  });
+  await new Promise((r) => broken.listen(0, "127.0.0.1", r));
+  try {
+    await assert.rejects(ingestWallet(OWNER, { rpcUrl: `http://127.0.0.1:${broken.address().port}` }), /HTTP 400|scan/i);
+  } finally {
+    broken.close();
+  }
+});
+
 test("classify: a malformed search answer is a cached no-data, not a crash", async () => {
   const srv = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });

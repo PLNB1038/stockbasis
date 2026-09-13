@@ -56,6 +56,36 @@ test("synthetic reconcile-in books an unseen custody deposit as basis-less", asy
   assert.ok(Math.abs(rebuilt.totalRealized - 10) < 1e-6); // the real round trip is untouched
 });
 
+test("reconciliation never rewrites same-second FIFO history", async () => {
+  // real sell in second T (slot 500) computed BEFORE the synthetic movement;
+  // the synthetic must sort after it (slot MAX), not before (slot 0)
+  const srv = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { value: [] } })); // chain holds nothing
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const prev = process.env.SOLANA_RPC;
+  process.env.SOLANA_RPC = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    primeTokenCache(TSLAX, { symbol: "TSLAx", name: "", isStock: true, tags: [] });
+    const owner = "Aaaa1111111111111111111111111111111111111111";
+    const t = Math.floor(Date.now() / 1000) - 3600;
+    const trades = [
+      { side: "buy", mint: TSLAX, qty: 1, valueUsd: 100, ts: t, slot: 1 },
+      { side: "buy", mint: TSLAX, qty: 1, valueUsd: 200, ts: t, slot: 2 },
+      { side: "sell", mint: TSLAX, qty: 1, valueUsd: 150, ts: t, slot: 500 }, // closes the $100 lot: +50
+    ];
+    const { report, reconciled } = await buildReconciledReport(owner, trades);
+    assert.equal(reconciled, 1);
+    const row = report.rows.find((r) => r.mint === TSLAX);
+    assert.ok(Math.abs(row.openQty) < 1e-9);
+    assert.ok(Math.abs(report.totalRealized - 50) < 1e-6, `FIFO rewritten by reconciliation: ${report.totalRealized}`);
+  } finally {
+    process.env.SOLANA_RPC = prev;
+    srv.close();
+  }
+});
+
 test("a failed balance read leaves positions alone instead of zeroing them", async () => {
   // an RPC that errors on every balance request must not poison the report:
   // a transient hiccup must never show up as "you hold nothing, reconciled"

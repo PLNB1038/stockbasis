@@ -12,7 +12,7 @@ export function toCsv(closes) {
     // pure numbers stay numeric even when negative — a leading apostrophe
     // would turn P&L values into text in spreadsheets
     if (!/^-?\d+(\.\d+)?$/.test(s) && /^[=+\-@]/.test(s.trimStart())) s = "'" + s;
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const iso = (ts) => (ts ? new Date(ts * 1000).toISOString().slice(0, 10) : "unknown");
   const qty = (v) => Number(v.toFixed(6)).toString(); // no raw float artifacts
