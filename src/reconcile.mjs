@@ -37,7 +37,9 @@ export function diffAdjustments(rows, balances) {
 export async function walletBalances(address, mints) {
   const balances = new Map();
   for (const mint of mints) {
-    const res = await rpc("getTokenAccountsByOwner", [address, { mint, encoding: "jsonParsed" }]).catch(() => null);
+    // strict 3-param form: some providers (Helius) reject a filter object that
+    // mixes a filter key with config keys like encoding
+    const res = await rpc("getTokenAccountsByOwner", [address, { mint }, { encoding: "jsonParsed" }]).catch(() => null);
     let q = 0;
     for (const a of res?.value ?? []) q += a.account?.data?.parsed?.info?.tokenAmount?.uiAmount ?? 0;
     balances.set(mint, q);

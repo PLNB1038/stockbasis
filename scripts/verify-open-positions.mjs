@@ -17,7 +17,8 @@ for (const address of process.argv.slice(2)) {
   for (const row of report.rows) {
     const res = await rpc("getTokenAccountsByOwner", [
       address,
-      { mint: row.mint, encoding: "jsonParsed" },
+      { mint: row.mint },
+      { encoding: "jsonParsed" },
     ]).catch(() => null);
     const accounts = res?.value ?? [];
     let onChain = 0;

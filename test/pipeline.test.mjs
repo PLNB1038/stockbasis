@@ -155,7 +155,13 @@ test("server: static guards and the full scan flow over a fake chain", async () 
   const fake = await fakeRpc({
     getSignaturesForAddress: () => ({ result: sigs }),
     getTransaction: (p) => ({ result: txs.get(p[0]) ?? null }),
-    getTokenAccountsByOwner: () => ({ result: { value: [] } }), // chain holds nothing
+    // strict provider rules: the account filter must carry exactly one key —
+    // mixed filter+config objects are rejected by stricter RPC providers
+    getTokenAccountsByOwner: (p) => {
+      const keys = Object.keys(p[1] ?? {});
+      if (keys.length !== 1) return { error: { code: -32602, message: "filter must have a single key" } };
+      return { result: { value: [] } }; // chain holds nothing
+    },
   });
   const port = 20000 + Math.floor(Math.random() * 20000);
   const base = `http://127.0.0.1:${port}`;
