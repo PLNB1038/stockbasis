@@ -49,19 +49,22 @@ function buildHistory(steps) {
 
 const HOUR = 3600;
 
-function fakeRpc(handlers) {
+const fakeRpc = (handlers) => {
   const server = http.createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
-      const { method, params } = JSON.parse(body);
-      const out = handlers[method] ? handlers[method](params) : { result: null };
+      // resilient parse: plain GETs (token-search probes) and garbage answer
+      // with a JSON-RPC "no data" result instead of crashing the test process
+      let msg = null;
+      try { msg = JSON.parse(body); } catch { /* not JSON-RPC */ }
+      const out = msg?.method && handlers[msg.method] ? handlers[msg.method](msg.params) : { result: null };
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, ...(out.error ? { error: out.error } : { result: out.result }) }));
     });
   });
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({ server, url: `http://127.0.0.1:${server.address().port}` })));
-}
+};
 
 const now = () => Math.floor(Date.now() / 1000);
 
