@@ -31,22 +31,23 @@ export function diffAdjustments(rows, balances) {
 /** Live on-chain balances for the given mints. One filtered call per mint —
  * the unfiltered "all accounts" answer is too large for public RPC on active
  * wallets, while per-mint queries are small and reliable.
- * @returns {Promise<Map<string, number>>} mint -> uiAmount
+ * @returns {Promise<{balances: Map<string, number>, failed: number}>}
  */
 async function walletBalances(address, mints) {
   const balances = new Map();
+  let failed = 0;
   for (const mint of mints) {
     // strict 3-param form: some providers (Helius) reject a filter object that
     // mixes a filter key with config keys like encoding
     // a failed balance read must SKIP the mint: recording a zero would wipe
     // real open positions from the report on a transient RPC hiccup
     const res = await rpc("getTokenAccountsByOwner", [address, { mint }, { encoding: "jsonParsed" }]).catch(() => null);
-    if (!res) continue;
+    if (!res) { failed++; continue; }
     let q = 0;
     for (const a of res?.value ?? []) q += a.account?.data?.parsed?.info?.tokenAmount?.uiAmount ?? 0;
     balances.set(mint, q);
   }
-  return balances;
+  return { balances, failed };
 }
 
 /**
@@ -55,14 +56,14 @@ async function walletBalances(address, mints) {
  */
 export async function buildReconciledReport(address, trades) {
   const report = await buildReport(trades);
-  let balances;
+  let out;
   try {
-    balances = await walletBalances(address, report.rows.map((r) => r.mint));
+    out = await walletBalances(address, report.rows.map((r) => r.mint));
   } catch {
-    return { report, reconciled: 0 }; // chain unreadable right now — the scan result stands
+    return { report, reconciled: 0, reconcileFailed: 0 }; // chain unreadable right now — the scan result stands
   }
-  const adjustments = diffAdjustments(report.rows, balances);
-  if (!adjustments.length) return { report, reconciled: 0 };
+  const adjustments = diffAdjustments(report.rows, out.balances);
+  if (!adjustments.length) return { report, reconciled: 0, reconcileFailed: out.failed };
 
   const now = Math.floor(Date.now() / 1000);
   const synthetic = adjustments.map((a) => ({
@@ -74,5 +75,5 @@ export async function buildReconciledReport(address, trades) {
     signature: "chain-reconcile",
   }));
   const rebuilt = await buildReport([...trades, ...synthetic]);
-  return { report: rebuilt, reconciled: adjustments.length };
+  return { report: rebuilt, reconciled: adjustments.length, reconcileFailed: out.failed };
 }

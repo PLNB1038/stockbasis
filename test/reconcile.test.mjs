@@ -70,8 +70,9 @@ test("a failed balance read leaves positions alone instead of zeroing them", asy
     primeTokenCache(TSLAX, { symbol: "TSLAx", name: "", isStock: true, tags: [] });
     const owner = "Aaaa1111111111111111111111111111111111111111";
     const trades = [{ side: "buy", mint: TSLAX, qty: 5, valueUsd: 500, ts: 100, slot: 1 }];
-    const { report, reconciled } = await buildReconciledReport(owner, trades);
+    const { report, reconciled, reconcileFailed } = await buildReconciledReport(owner, trades);
     assert.equal(reconciled, 0); // unreadable chain: the scan result stands
+    assert.equal(reconcileFailed, 1); // and the report says so instead of hiding it
     const row = report.rows.find((r) => r.mint === TSLAX);
     assert.ok(Math.abs(row.openQty - 5) < 1e-9, `open qty wiped: ${row.openQty}`);
     assert.ok(Math.abs(row.openCostUsd - 500) < 1e-6);

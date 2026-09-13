@@ -31,7 +31,7 @@ if (cmd === "scan") {
   process.exit(0);
 }
 
-const { report, reconciled } = await buildReconciledReport(address, trades);
+const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades);
 const { rows, closes, totalRealized } = report;
 
 if (cmd === "csv") {
@@ -42,6 +42,7 @@ if (cmd === "csv") {
   console.table(rows.map(({ mint, ...r }) => ({ symbol: r.symbol, trades: r.trades, realizedUsd: r.realizedUsd, openQty: r.openQty, openCostUsd: r.openCostUsd })));
   console.log(`TOTAL realized P&L: ${totalRealized.toFixed(2)} USD across ${rows.length} stock tokens`);
   if (reconciled) console.log(`open positions reconciled to on-chain balances: ${reconciled} token(s) adjusted`);
+  if (reconcileFailed) console.log(`on-chain balance unavailable for ${reconcileFailed} token(s) — those positions stay as scanned`);
   if (coverage?.fromTs) {
     const day = (ts) => new Date(ts * 1000).toISOString().slice(0, 10);
     console.log(`history covered: ${day(coverage.fromTs)} → ${day(coverage.toTs)} (${coverage.scanned} txs scanned)`);

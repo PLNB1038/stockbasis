@@ -121,6 +121,7 @@ function render(job) {
   if ((job.result.priceCorrections ?? 0) > 0) notes.push(`${job.result.priceCorrections} recent trade${job.result.priceCorrections > 1 ? "s" : ""} valued at market price (cash leg ambiguous in an aggregated route).`);
   if ((job.result.ambiguous ?? 0) > 0) notes.push(`${job.result.ambiguous} older trade${job.result.ambiguous > 1 ? "s" : ""} excluded from P&L as ambiguous (aggregated route, no reliable historical price — the shares still left the inventory).`);
   if ((job.result.reconciled ?? 0) > 0) notes.push(`${job.result.reconciled} open position${job.result.reconciled > 1 ? "s" : ""} reconciled to on-chain balances (some movements were not retrievable from public RPC).`);
+  if ((job.result.reconcileFailed ?? 0) > 0) notes.push(`On-chain balance unavailable for ${job.result.reconcileFailed} token${job.result.reconcileFailed > 1 ? "s" : ""} — those positions are shown as scanned.`);
   if (notes.length) {
     note.textContent = notes.join(" ");
     note.hidden = false;
