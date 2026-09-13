@@ -28,13 +28,12 @@ export function diffAdjustments(rows, balances) {
   return adj;
 }
 
-/**
- * Live on-chain balances for the given mints. One filtered call per mint —
+/** Live on-chain balances for the given mints. One filtered call per mint —
  * the unfiltered "all accounts" answer is too large for public RPC on active
  * wallets, while per-mint queries are small and reliable.
  * @returns {Promise<Map<string, number>>} mint -> uiAmount
  */
-export async function walletBalances(address, mints) {
+async function walletBalances(address, mints) {
   const balances = new Map();
   for (const mint of mints) {
     // strict 3-param form: some providers (Helius) reject a filter object that
