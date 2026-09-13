@@ -43,8 +43,13 @@ async function precomputeFeatured() {
   for (const address of featuredAddresses) {
     try {
       // landing-page wallets get the deep scan: no UI is waiting on them,
-      // and full history means real cost basis instead of "unknown" rows
-      const { trades, coverage, ambiguous, transfers: tfs } = await ingestWallet(address, { maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900 });
+      // and full history means real cost basis instead of "unknown" rows.
+      // PRECOMPUTE_RPC can point the background scans at unmetered mirrors
+      // so rate-limited/paid endpoints stay reserved for interactive scans.
+      const { trades, coverage, ambiguous, transfers: tfs } = await ingestWallet(address, {
+        rpcUrl: process.env.PRECOMPUTE_RPC,
+        maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900,
+      });
       const { report, reconciled } = await buildReconciledReport(address, trades);
       fresh.set(address, { ...report, reconciled, coverage, ambiguous, transfersCount: tfs.length });
     } catch (e) {
