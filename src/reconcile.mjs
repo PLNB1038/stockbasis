@@ -19,7 +19,10 @@ export function diffAdjustments(rows, balances) {
     const onChain = balances.get(row.mint) ?? 0;
     const claimed = (row.openQty ?? 0) + (row.openUnknownQty ?? 0);
     const diff = onChain - claimed;
-    if (Math.abs(diff) <= Math.max(1e-6, onChain * 0.01)) continue; // 1% drift for in-flight activity
+    // drift tolerance for in-flight activity between scan and balance read:
+    // 1% relative, capped at half a unit so large positions don't get a
+    // whale-sized silent allowance
+    if (Math.abs(diff) <= Math.max(1e-6, Math.min(onChain * 0.01, 0.5))) continue;
     adj.push({ mint: row.mint, diff });
   }
   return adj;
