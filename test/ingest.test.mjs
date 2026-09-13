@@ -54,7 +54,7 @@ test("tokenDeltas nets across accounts of one mint", () => {
 test("rent reclaim after a withdrawal is not a micro-sale", async () => {
   primeTokenCache(TSLAX, { symbol: "TSLAx", name: "", isStock: true, tags: [] });
   const trades = [], transfers = [];
-  // gift-out 10 TSLAx + own-ATA rent reclaim (+0.00204 SOL) — был фейковый "sell за $0.30"
+  // gift-out 10 TSLAx + own-ATA rent reclaim (+0.00204 SOL) — must not book a dust "sell"
   await pairTrades([{ mint: TSLAX, delta: -10 }], { ts: 1, signature: "s1", solDelta: 2_040_000 }, trades, transfers);
   assert.equal(trades.filter((t) => t.side === "sell").length, 0);
   assert.equal(trades.find((t) => t.side === "out")?.qty, 10); // движение, не продажа
@@ -64,7 +64,7 @@ test("invisible SOL leg books a buy above the dust floor", async () => {
   primeTokenCache(TSLAX, { symbol: "TSLAx", name: "", isStock: true, tags: [] });
   primeSolDayCache(1700000000, 100);
   const trades = [];
-  // buy 5 TSLAx: SOL delta −(500.002 SOL) — покупка + рента за новый ATA
+  // buy 5 TSLAx: SOL delta −(500.002 SOL) — purchase plus rent for a new ATA
   await pairTrades([{ mint: TSLAX, delta: 5 }], { ts: 1700000000, signature: "s2", solDelta: -500.002e9 }, trades, []);
   const buy = trades.find((t) => t.side === "buy");
   assert.equal(buy.qty, 5);
