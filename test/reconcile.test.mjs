@@ -3,7 +3,8 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { diffAdjustments } from "../src/reconcile.mjs";
+import http from "node:http";
+import { diffAdjustments, buildReconciledReport } from "../src/reconcile.mjs";
 import { buildReport } from "../src/report.mjs";
 import { primeTokenCache } from "../src/classify.mjs";
 
@@ -53,4 +54,29 @@ test("synthetic reconcile-in books an unseen custody deposit as basis-less", asy
   const row = rebuilt.rows.find((r) => r.mint === TSLAX);
   assert.ok(Math.abs(row.openUnknownQty - 4) < 1e-9); // held, with unknowable basis
   assert.ok(Math.abs(rebuilt.totalRealized - 10) < 1e-6); // the real round trip is untouched
+});
+
+test("a failed balance read leaves positions alone instead of zeroing them", async () => {
+  // an RPC that errors on every balance request must not poison the report:
+  // a transient hiccup must never show up as "you hold nothing, reconciled"
+  const srv = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32603, message: "internal" } }));
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const prev = process.env.SOLANA_RPC;
+  process.env.SOLANA_RPC = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    primeTokenCache(TSLAX, { symbol: "TSLAx", name: "", isStock: true, tags: [] });
+    const owner = "Aaaa1111111111111111111111111111111111111111";
+    const trades = [{ side: "buy", mint: TSLAX, qty: 5, valueUsd: 500, ts: 100, slot: 1 }];
+    const { report, reconciled } = await buildReconciledReport(owner, trades);
+    assert.equal(reconciled, 0); // unreadable chain: the scan result stands
+    const row = report.rows.find((r) => r.mint === TSLAX);
+    assert.ok(Math.abs(row.openQty - 5) < 1e-9, `open qty wiped: ${row.openQty}`);
+    assert.ok(Math.abs(row.openCostUsd - 500) < 1e-6);
+  } finally {
+    process.env.SOLANA_RPC = prev;
+    srv.close();
+  }
 });

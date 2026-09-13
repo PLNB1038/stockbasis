@@ -38,7 +38,10 @@ async function walletBalances(address, mints) {
   for (const mint of mints) {
     // strict 3-param form: some providers (Helius) reject a filter object that
     // mixes a filter key with config keys like encoding
+    // a failed balance read must SKIP the mint: recording a zero would wipe
+    // real open positions from the report on a transient RPC hiccup
     const res = await rpc("getTokenAccountsByOwner", [address, { mint }, { encoding: "jsonParsed" }]).catch(() => null);
+    if (!res) continue;
     let q = 0;
     for (const a of res?.value ?? []) q += a.account?.data?.parsed?.info?.tokenAmount?.uiAmount ?? 0;
     balances.set(mint, q);
