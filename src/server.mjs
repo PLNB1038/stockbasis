@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { ingestWallet } from "./ingest.mjs";
-import { buildReport } from "./report.mjs";
+import { buildReconciledReport } from "./reconcile.mjs";
 
 const webDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "web");
 const dataDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
@@ -45,7 +45,8 @@ async function precomputeFeatured() {
       // landing-page wallets get the deep scan: no UI is waiting on them,
       // and full history means real cost basis instead of "unknown" rows
       const { trades, coverage, ambiguous, transfers: tfs } = await ingestWallet(address, { maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900 });
-      fresh.set(address, { ...(await buildReport(trades)), coverage, ambiguous, transfersCount: tfs.length });
+      const { report, reconciled } = await buildReconciledReport(address, trades);
+      fresh.set(address, { ...report, reconciled, coverage, ambiguous, transfersCount: tfs.length });
     } catch (e) {
       console.error(`[stockbasis] precompute ${address.slice(0, 8)} failed: ${String(e?.message ?? e).slice(0, 80)}`);
     }
@@ -91,7 +92,8 @@ function startJob(address) {
     onProgress: (p) => { job.progress = p.scanned; job.trades = p.trades; job.phase = "scan"; },
   })
     .then(async ({ trades, coverage, ambiguous, transfers: tfs }) => {
-      job.result = { ...(await buildReport(trades)), coverage, ambiguous, transfersCount: tfs.length };
+      const { report, reconciled } = await buildReconciledReport(address, trades);
+      job.result = { ...report, reconciled, coverage, ambiguous, transfersCount: tfs.length };
       job.status = "done";
       job.finished = Date.now();
     })

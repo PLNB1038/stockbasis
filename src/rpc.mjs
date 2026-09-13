@@ -43,6 +43,10 @@ export function rpc(method, params, opts = {}) {
 
 async function rpcInner(method, params, opts = {}) {
   const urls = endpoints(opts);
+  // endpoints that answered -32020 ("not found") for THIS call: a public mirror
+  // lacking old transactions is a per-endpoint data hole, not a chain fact —
+  // only when every endpoint says "not found" may the caller treat it as real
+  const holes = new Set();
 
   for (let attempt = 0; ; attempt++) {
     // pace: at least MIN_INTERVAL_MS between calls
@@ -68,8 +72,16 @@ async function rpcInner(method, params, opts = {}) {
 
     const body = await res.json();
     if (body.error) {
-      // -32020 "transaction not found": a data hole, retrying other mirrors won't fix it
-      if (body.error.code === -32020) throw new RpcError(method, body.error);
+      // -32020 "transaction not found": try the remaining mirrors first —
+      // the primary usually still serves what a shallow mirror has dropped
+      if (body.error.code === -32020) {
+        holes.add(urls[endpointIdx % urls.length]);
+        if (holes.size < urls.length) {
+          endpointIdx++;
+          continue;
+        }
+        throw new RpcError(method, body.error);
+      }
       // other RPC-level errors can be transient (node behind a load balancer)
       if (attempt >= MAX_RETRIES) throw new RpcError(method, body.error);
       endpointIdx++;

@@ -119,7 +119,8 @@ function render(job) {
   const notes = [];
   if (unknownBasis > 0 && !showAssumed) notes.push(`${unknownBasis} disposal${unknownBasis > 1 ? "s" : ""} with unknown cost basis (bought before the scanned history, or deposited from custody) excluded from P&L — tick the box above to assume market price.`);
   if ((job.result.priceCorrections ?? 0) > 0) notes.push(`${job.result.priceCorrections} recent trade${job.result.priceCorrections > 1 ? "s" : ""} valued at market price (cash leg ambiguous in an aggregated route).`);
-  if ((job.result.ambiguous ?? 0) > 0) notes.push(`${job.result.ambiguous} older trade${job.result.ambiguous > 1 ? "s" : ""} excluded as ambiguous (aggregated route, no reliable historical price).`);
+  if ((job.result.ambiguous ?? 0) > 0) notes.push(`${job.result.ambiguous} older trade${job.result.ambiguous > 1 ? "s" : ""} excluded from P&L as ambiguous (aggregated route, no reliable historical price — the shares still left the inventory).`);
+  if ((job.result.reconciled ?? 0) > 0) notes.push(`${job.result.reconciled} open position${job.result.reconciled > 1 ? "s" : ""} reconciled to on-chain balances (some movements were not retrievable from public RPC).`);
   if (notes.length) {
     note.textContent = notes.join(" ");
     note.hidden = false;
@@ -160,7 +161,7 @@ function render(job) {
       <td class="num">${r.trades}</td>
       <td class="num hint" ${r.unknownBasis ? `title="+${r.unknownBasis} with unknown basis"` : ""}>${r.wins}/${r.losses}</td>
       <td class="num">${realized}</td>
-      <td class="num">${r.openQty ? fmtQty(r.openQty) : "—"}</td>
+      <td class="num" ${r.openUnknownQty ? `title="${r.openUnknownQty} with unknown basis (custody or unseen deposit)"` : ""}>${r.openQty || r.openUnknownQty ? fmtQty(r.openQty + r.openUnknownQty) : "—"}</td>
       <td class="num">${r.openCostUsd ? fmt(r.openCostUsd) : "—"}</td>
       <td class="num hint act">${dates(r)}</td>
     </tr>`;

@@ -23,7 +23,7 @@ for (const address of process.argv.slice(2)) {
     let onChain = 0;
     for (const a of accounts) onChain += a.account.data.parsed.info.tokenAmount.uiAmount ?? 0;
 
-    const claimed = row.openQty ?? 0;
+    const claimed = (row.openQty ?? 0) + (row.openUnknownQty ?? 0);
     if (claimed < 1e-9 && onChain < 1e-9) continue;
     checked++;
     const diff = Math.abs(onChain - claimed);

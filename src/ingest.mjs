@@ -91,8 +91,39 @@ const TX_CONCURRENCY = Number(process.env.INGEST_CONCURRENCY ?? 5);
 /**
  * Aggregator routes make cash-leg pairing ambiguous. Trades whose implied
  * price is far off market are repriced at market when recent; older ones are
- * dropped entirely — a current spot price must not rewrite month-old history.
+ * converted to no-P&L movements — a current spot price must not rewrite
+ * month-old history, but the shares still moved and the inventory must show it.
+ * Pure: prices and clock injected, exported for tests.
  */
+export function applySanityGate(trades, prices, now) {
+  let corrected = 0;
+  let ambiguous = 0;
+  for (let i = trades.length - 1; i >= 0; i--) {
+    const t = trades[i];
+    const px = prices.get(t.mint);
+    if (!px) continue;
+    t.marketPx = px; // used by the optional market-basis assumption
+    if (t.qty <= 0 || t.valueUsd <= 0) continue;
+    const implied = t.valueUsd / t.qty;
+    if (implied <= px * 1.3 && implied >= px * 0.7) continue;
+
+    if (now - t.ts < 7 * 86400) {
+      // recent: today's spot is a fair stand-in for the trade-time price
+      t.valueUsd = Math.round(t.qty * px * 100) / 100;
+      t.priceCorrected = true;
+      corrected++;
+    } else {
+      // old: spot says nothing about the historical price — book the movement
+      // without P&L instead of pretending it never happened (phantom lots)
+      t.side = t.side === "sell" ? "out" : "in";
+      t.valueUsd = 0;
+      delete t.priceCorrected;
+      ambiguous++;
+    }
+  }
+  return { corrected, ambiguous };
+}
+
 async function priceSanityGate(trades) {
   if (!trades.length) return { corrected: 0, ambiguous: 0 };
   const mints = [...new Set(trades.map((t) => t.mint))];
@@ -114,40 +145,20 @@ async function priceSanityGate(trades) {
   } catch {
     return { corrected: 0, ambiguous: 0 }; // no market data — leave trades as paired
   }
-
-  let corrected = 0;
-  let ambiguousCount = 0;
-  const now = Date.now() / 1000;
-  for (let i = trades.length - 1; i >= 0; i--) {
-    const t = trades[i];
-    const px = prices.get(t.mint);
-    if (!px) continue;
-    t.marketPx = px; // used by the optional market-basis assumption
-    if (t.qty <= 0 || t.valueUsd <= 0) continue;
-    const implied = t.valueUsd / t.qty;
-    if (implied <= px * 1.3 && implied >= px * 0.7) continue;
-
-    if (now - t.ts < 7 * 86400) {
-      // recent: today's spot is a fair stand-in for the trade-time price
-      t.valueUsd = Math.round(t.qty * px * 100) / 100;
-      t.priceCorrected = true;
-      corrected++;
-    } else {
-      // old: spot says nothing about the historical price — drop rather than lie
-      trades.splice(i, 1);
-      ambiguousCount++;
-    }
-  }
-  return { corrected, ambiguous: ambiguousCount };
+  return applySanityGate(trades, prices, Date.now() / 1000);
 }
 
-/** Fetch one parsed transaction; null if a mirror doesn't index it. */
+/** Fetch one parsed transaction; null only when every mirror truly lacks it. */
 async function fetchTx(s, opts = {}) {
-  try {
-    return await rpc("getTransaction", [s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], opts);
-  } catch (e) {
-    if (e instanceof RpcError && e.code === -32020) return null;
-    throw e;
+  // a silently skipped tx is an invisible hole in the wallet's history, so
+  // transient network failures (timeouts, resets) get a couple of retries
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await rpc("getTransaction", [s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], opts);
+    } catch (e) {
+      if (e instanceof RpcError && e.code === -32020) return null; // no endpoint has it
+      if (attempt >= 2) return null;
+    }
   }
 }
 
@@ -223,9 +234,14 @@ export async function pairTrades(deltas, ctx, trades, transfers) {
     .map(([mint, delta]) => ({ mint, delta }));
 
   // a multi-stock bundle cannot be decomposed from deltas alone — no greedy
-  // guessing which cash leg paid for which share: record all as movements
+  // guessing which cash leg paid for which share. Record the movements without
+  // P&L: outgoing shares consume open lots, incoming create unknown-basis
+  // inventory. Vanishing them would leave phantom open positions.
   if (equity.length > 1) {
-    for (const e of equity) transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
+    for (const e of equity) {
+      transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
+      trades.push({ side: e.delta < 0 ? "out" : "in", mint: e.mint, qty: Math.abs(e.delta), valueUsd: 0, ts: ctx.ts, slot: ctx.slot, signature: ctx.signature });
+    }
     return;
   }
 
@@ -287,9 +303,11 @@ export async function pairTrades(deltas, ctx, trades, transfers) {
       } else valueUsd += Math.abs(c.delta);
     }
     if (!priced) {
-      // no price source for the WSOL leg: a movement without a value, never a guess
+      // no price source for the WSOL leg: a movement without a value, never a
+      // guess — and never a disappearance: the shares still left/arrived
       for (const c of legs) cash.splice(cash.indexOf(c), 1);
       transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
+      trades.push({ side: e.delta < 0 ? "out" : "in", mint: e.mint, qty: Math.abs(e.delta), valueUsd: 0, ts: ctx.ts, slot: ctx.slot, signature: ctx.signature });
       continue;
     }
     for (const c of legs) cash.splice(cash.indexOf(c), 1); // consumed

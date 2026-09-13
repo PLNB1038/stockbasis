@@ -4,7 +4,7 @@
 //   node src/cli.mjs scan    <address>   debug: list equity tokens the wallet touched
 
 import { ingestWallet } from "./ingest.mjs";
-import { buildReport } from "./report.mjs";
+import { buildReconciledReport } from "./reconcile.mjs";
 import { lookupToken } from "./classify.mjs";
 import { toCsv } from "./csv.mjs";
 
@@ -31,7 +31,8 @@ if (cmd === "scan") {
   process.exit(0);
 }
 
-const { rows, closes, totalRealized } = await buildReport(trades);
+const { report, reconciled } = await buildReconciledReport(address, trades);
+const { rows, closes, totalRealized } = report;
 
 if (cmd === "csv") {
   const file = `stockbasis-${address.slice(0, 8)}.csv`;
@@ -40,6 +41,7 @@ if (cmd === "csv") {
 } else {
   console.table(rows.map(({ mint, ...r }) => ({ symbol: r.symbol, trades: r.trades, realizedUsd: r.realizedUsd, openQty: r.openQty, openCostUsd: r.openCostUsd })));
   console.log(`TOTAL realized P&L: ${totalRealized.toFixed(2)} USD across ${rows.length} stock tokens`);
+  if (reconciled) console.log(`open positions reconciled to on-chain balances: ${reconciled} token(s) adjusted`);
   if (coverage?.fromTs) {
     const day = (ts) => new Date(ts * 1000).toISOString().slice(0, 10);
     console.log(`history covered: ${day(coverage.fromTs)} → ${day(coverage.toTs)} (${coverage.scanned} txs scanned)`);

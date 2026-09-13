@@ -164,6 +164,7 @@ export function perStockSummary(tradesByMint, meta) {
       closes: b.closes,
       realizedUsd: round(b.realizedUsd, 2),
       openQty: round(b.openQty, 6),
+      openUnknownQty: round(b.openUnknownQty, 6),
       openCostUsd: round(b.openCostUsd, 2),
       firstTs: trades.length ? Math.min(...trades.map((t) => t.ts)) : undefined,
       lastTs: trades.length ? Math.max(...trades.map((t) => t.ts)) : undefined,
