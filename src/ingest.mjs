@@ -50,7 +50,7 @@ export async function ingestWallet(address, opts = {}) {
     if (scanned >= maxTx || trades.length >= target || Date.now() - started > timeBudgetMs) break;
 
     const chunk = sigs.slice(i, i + TX_CONCURRENCY);
-      const txs = await Promise.all(chunk.map((s) => fetchTx(s, opts).catch(() => null)));
+    const txs = await Promise.all(chunk.map((s) => fetchTx(s, opts).catch(() => null)));
 
     for (let j = 0; j < chunk.length; j++) {
       const tx = txs[j];
@@ -86,6 +86,8 @@ export async function ingestWallet(address, opts = {}) {
   };
 }
 
+// chunks feed the single serialized RPC queue — this knob only sets how many
+// fetches are queued per round, it does not bypass the global pacing
 const TX_CONCURRENCY = Number(process.env.INGEST_CONCURRENCY ?? 5);
 
 /**
@@ -150,14 +152,15 @@ async function priceSanityGate(trades) {
 
 /** Fetch one parsed transaction; null only when every mirror truly lacks it. */
 async function fetchTx(s, opts = {}) {
-  // a silently skipped tx is an invisible hole in the wallet's history, so
-  // transient network failures (timeouts, resets) get a couple of retries
+  // a silently skipped tx is an invisible hole in the wallet's history, so a
+  // transient network failure gets one retry — but no more: rpc() already
+  // retries internally, and stacked retry loops could stall a scan for minutes
   for (let attempt = 0; ; attempt++) {
     try {
       return await rpc("getTransaction", [s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], opts);
     } catch (e) {
       if (e instanceof RpcError && e.code === -32020) return null; // no endpoint has it
-      if (attempt >= 2) return null;
+      if (attempt >= 1) return null;
     }
   }
 }

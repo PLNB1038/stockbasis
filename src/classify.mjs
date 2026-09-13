@@ -60,9 +60,8 @@ export function primeTokenCache(mint, meta) {
   cache.set(mint, meta);
 }
 
-/** Stablecoins we treat as the cash leg of a trade. */
+/** Stablecoins we treat as the cash leg of a trade (mint addresses verified on-chain). */
 export const STABLES = new Set([
   "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
   "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
-  "USDSfrMwLsBiaaPZonNncG1FzGZYzkNk3ZhzV8R9bF", // USDS
 ]);
