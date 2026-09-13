@@ -233,4 +233,5 @@ server.requestTimeout = 30_000;
 server.headersTimeout = 31_000;
 
 server.listen(PORT, () => console.log(`[stockbasis] http://localhost:${PORT} (scan budget: ${MAX_SCAN_TX} txs or ${TARGET_TRADES} stock trades)`));
-loadFeatured();
+// STOCKBASIS_NO_FEATURED=1 skips the background precompute (tests/offline runs)
+if (process.env.STOCKBASIS_NO_FEATURED !== "1") loadFeatured();

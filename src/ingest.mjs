@@ -50,7 +50,7 @@ export async function ingestWallet(address, opts = {}) {
     if (scanned >= maxTx || trades.length >= target || Date.now() - started > timeBudgetMs) break;
 
     const chunk = sigs.slice(i, i + TX_CONCURRENCY);
-    const txs = await Promise.all(chunk.map((s) => fetchTx(s).catch(() => null)));
+      const txs = await Promise.all(chunk.map((s) => fetchTx(s, opts).catch(() => null)));
 
     for (let j = 0; j < chunk.length; j++) {
       const tx = txs[j];
