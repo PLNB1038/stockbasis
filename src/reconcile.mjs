@@ -54,7 +54,7 @@ async function walletBalances(address, mints) {
  * Build the report, then true up open positions against the chain and rebuild.
  * @returns {Promise<{report: object, reconciled: number}>}
  */
-export async function buildReconciledReport(address, trades) {
+export async function buildReconciledReport(address, trades, { now = () => Math.floor(Date.now() / 1000) } = {}) {
   const report = await buildReport(trades);
   let out;
   try {
@@ -65,13 +65,13 @@ export async function buildReconciledReport(address, trades) {
   const adjustments = diffAdjustments(report.rows, out.balances);
   if (!adjustments.length) return { report, reconciled: 0, reconcileFailed: out.failed };
 
-  const now = Math.floor(Date.now() / 1000);
+  const ts = typeof now === "function" ? now() : now;
   const synthetic = adjustments.map((a) => ({
     side: a.diff < 0 ? "out" : "in", // phantom lots leave the books; unseen deposits arrive basis-less
     mint: a.mint,
     qty: Math.abs(a.diff),
     valueUsd: 0,
-    ts: now,
+    ts,
     slot: Number.MAX_SAFE_INTEGER, // after any real trade in the same second — never rewrite computed FIFO
     signature: "chain-reconcile",
   }));

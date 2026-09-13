@@ -152,3 +152,18 @@ test("no trades -> zero everything", () => {
   assert.equal(r.openQty, 0);
   assert.equal(r.closes.length, 0);
 });
+
+test("same-second tie: an equal-time custody deposit is consumed before the known lot", () => {
+  // deposit and purchase share one timestamp: the conservative reading sells
+  // the unknowable-basis shares first — profit is not invented on a tie
+  const t = 1_758_000_000;
+  const r = fifoBasis([
+    { side: "buy", qty: 1, valueUsd: 100, ts: t, slot: 1 },
+    { side: "in", qty: 1, valueUsd: 0, ts: t, slot: 2 },
+    { side: "sell", qty: 1, valueUsd: 120, ts: t + 60, slot: 3 },
+  ]);
+  assert.equal(r.closes.length, 0);          // the known $100 lot is NOT closed
+  assert.equal(r.realizedUsd, 0);            // no invented +20 on the tie
+  assert.equal(r.unknownBasis.length, 1);    // the sale consumed the deposit
+  assert.ok(Math.abs(r.openQty - 1) < 1e-9); // the known lot stays open
+});

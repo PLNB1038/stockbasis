@@ -57,8 +57,9 @@ test("synthetic reconcile-in books an unseen custody deposit as basis-less", asy
 });
 
 test("reconciliation never rewrites same-second FIFO history", async () => {
-  // real sell in second T (slot 500) computed BEFORE the synthetic movement;
-  // the synthetic must sort after it (slot MAX), not before (slot 0)
+  // the real sell and the synthetic movement share ONE second; the synthetic
+  // must sort after every real trade in that second (slot MAX), so the +50
+  // close computed from the $100 lot survives untouched
   const srv = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { value: [] } })); // chain holds nothing
@@ -75,7 +76,8 @@ test("reconciliation never rewrites same-second FIFO history", async () => {
       { side: "buy", mint: TSLAX, qty: 1, valueUsd: 200, ts: t, slot: 2 },
       { side: "sell", mint: TSLAX, qty: 1, valueUsd: 150, ts: t, slot: 500 }, // closes the $100 lot: +50
     ];
-    const { report, reconciled } = await buildReconciledReport(owner, trades);
+    // synthetic stamped into the SAME second as the real sell (injected clock)
+    const { report, reconciled } = await buildReconciledReport(owner, trades, { now: t });
     assert.equal(reconciled, 1);
     const row = report.rows.find((r) => r.mint === TSLAX);
     assert.ok(Math.abs(row.openQty) < 1e-9);
