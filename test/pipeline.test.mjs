@@ -223,3 +223,23 @@ test("web bundle parses — the duplicated-declaration class of bugs never ships
   const r = spawnSync(process.execPath, ["--check", path.join(ROOT, "web", "app.js")]);
   assert.equal(r.status, 0, `app.js syntax error: ${r.stderr}`);
 });
+
+test("classify: a malformed search answer is a cached no-data, not a crash", async () => {
+  const srv = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "maintenance" })); // not an array
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  process.env.JUP_SEARCH_URL = `http://127.0.0.1:${srv.address().port}/search`;
+  try {
+    const fresh = await import(`../src/classify.mjs?malformed=${Date.now()}`);
+    const mint = "UnCuratedMint11111111111111111111111111";
+    assert.equal(await fresh.lookupToken(mint), null);
+    const t0 = Date.now();
+    assert.equal(await fresh.lookupToken(mint), null); // served from cache
+    assert.ok(Date.now() - t0 < 50, "cached lookup must not touch the network");
+  } finally {
+    delete process.env.JUP_SEARCH_URL;
+    srv.close();
+  }
+});

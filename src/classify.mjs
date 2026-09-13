@@ -41,7 +41,9 @@ export async function lookupToken(mint) {
     }
     if (!res.ok) throw new Error(`Jupiter search HTTP ${res.status} for ${mint}`);
     const items = await res.json();
-    const t = items.find((x) => x.id === mint) ?? null; // never a lookalike from fuzzy search
+    // a non-array body (error object, gateway page) is a "no data" answer, not
+    // a crash: cache null and keep the rest of the transaction trading
+    const t = (Array.isArray(items) ? items.find((x) => x.id === mint) : undefined) ?? null;
     if (t) {
       const tags = t.tags ?? [];
       out = { symbol: t.symbol ?? "?", name: t.name ?? "", isStock: tags.some((x) => STOCK_TAGS.has(x)), tags };
