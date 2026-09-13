@@ -162,7 +162,7 @@ function render(job) {
       <td class="num">${realized}</td>
       <td class="num">${r.openQty ? fmtQty(r.openQty) : "—"}</td>
       <td class="num">${r.openCostUsd ? fmt(r.openCostUsd) : "—"}</td>
-      <td class="num hint">${dates(r)}</td>
+      <td class="num hint act">${dates(r)}</td>
     </tr>`;
   }).join("");
 
@@ -203,10 +203,10 @@ const csvSafe = (s) => {
   if (!/^-?\d+(\.\d+)?$/.test(v) && /^[=+\-@]/.test(v.trimStart())) v = "'" + v;
   return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
 };
-const day = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+const day = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" });
 const dates = (r) => {
   if (!r.firstTs) return "";
-  const f = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const f = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" });
   return `${f(r.firstTs)} → ${f(r.lastTs)}`;
 };
 const esc = (s) => String(s ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
