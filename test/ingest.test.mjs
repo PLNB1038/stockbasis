@@ -157,3 +157,22 @@ test("sanity gate: recent out-of-band trade is repriced at market", () => {
   assert.equal(trades[0].valueUsd, 500);
   assert.equal(trades[0].priceCorrected, true);
 });
+
+test("sanity gate: in-band trades pass through completely untouched", () => {
+  // the implied price must be value/qty — a fair trade is never repriced,
+  // never flagged, never converted to a movement
+  const now = 1_758_000_000;
+  const prices = new Map([[TSLAX, 100]]);
+  const trades = [
+    { side: "buy", mint: TSLAX, qty: 2, valueUsd: 200, ts: now - 86400 },
+    { side: "sell", mint: TSLAX, qty: 1, valueUsd: 100, ts: now - 3600 },
+  ];
+  const { corrected, ambiguous } = applySanityGate(trades, prices, now);
+  assert.equal(corrected, 0);
+  assert.equal(ambiguous, 0);
+  assert.equal(trades[0].valueUsd, 200); // exact values preserved
+  assert.equal(trades[1].valueUsd, 100);
+  assert.ok(!trades[0].priceCorrected && !trades[1].priceCorrected);
+  assert.equal(trades[0].side, "buy"); // sides preserved
+  assert.equal(trades[1].side, "sell");
+});
