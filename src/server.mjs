@@ -50,12 +50,15 @@ async function precomputeFeatured() {
         rpcUrl: process.env.PRECOMPUTE_RPC,
         maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900,
       });
+      if (!trades.length) continue; // dead wallet: keep the previous good snapshot instead of an empty report
       const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades);
       fresh.set(address, { ...report, reconciled, reconcileFailed, coverage, ambiguous, transfersCount: tfs.length });
     } catch (e) {
       console.error(`[stockbasis] precompute ${address.slice(0, 8)} failed: ${String(e?.message ?? e).slice(0, 80)}`);
     }
   }
+  // stale-but-good beats fresh-and-empty: only replace entries that rescanned
+  for (const [addr, prev] of precomputed) if (!fresh.has(addr)) fresh.set(addr, prev);
   precomputed.clear();
   for (const [k, v] of fresh) precomputed.set(k, v);
 }
