@@ -25,6 +25,17 @@ function endpoints(opts) {
 }
 
 /**
+ * The endpoint the next paced call will hit, plus every other endpoint —
+ * for callers that need to cross-check an answer against a mirror that
+ * did NOT just serve it (an empty-but-200 answer is one mirror's word).
+ */
+export function rpcEndpoints(opts = {}) {
+  const urls = endpoints(opts);
+  const current = urls[endpointIdx % urls.length];
+  return { current, others: urls.filter((u) => u !== current) };
+}
+
+/**
  * Call a Solana JSON-RPC method.
  * @param {string} method
  * @param {unknown[]} params

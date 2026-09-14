@@ -38,29 +38,39 @@ setInterval(() => {
 const precomputed = new Map(); // address -> job-shaped result
 let featuredAddresses = [];
 
+// one round at a time: a slow round (up to 15 min of RPC pacing per wallet)
+// must not stack on top of the next 60-min tick — stacked rounds would starve
+// interactive scans in the shared RPC queue and grow memory without bound
+let precomputeBusy = false;
 async function precomputeFeatured() {
-  const fresh = new Map();
-  for (const address of featuredAddresses) {
-    try {
-      // landing-page wallets get the deep scan: no UI is waiting on them,
-      // and full history means real cost basis instead of "unknown" rows.
-      // PRECOMPUTE_RPC can point the background scans at unmetered mirrors
-      // so rate-limited/paid endpoints stay reserved for interactive scans.
-      const { trades, coverage, ambiguous, transfers: tfs } = await ingestWallet(address, {
-        rpcUrl: process.env.PRECOMPUTE_RPC,
-        maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900,
-      });
-      if (!trades.length) continue; // dead wallet: keep the previous good snapshot instead of an empty report
-      const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades);
-      fresh.set(address, { ...report, reconciled, reconcileFailed, coverage, ambiguous, transfersCount: tfs.length });
-    } catch (e) {
-      console.error(`[stockbasis] precompute ${address.slice(0, 8)} failed: ${String(e?.message ?? e).slice(0, 80)}`);
+  if (precomputeBusy) return console.error("[stockbasis] precompute round still running, skipping tick");
+  precomputeBusy = true;
+  try {
+    const fresh = new Map();
+    for (const address of featuredAddresses) {
+      try {
+        // landing-page wallets get the deep scan: no UI is waiting on them,
+        // and full history means real cost basis instead of "unknown" rows.
+        // PRECOMPUTE_RPC can point the background scans at unmetered mirrors
+        // so rate-limited/paid endpoints stay reserved for interactive scans.
+        const { trades, coverage, ambiguous, classifyFailed, transfers: tfs } = await ingestWallet(address, {
+          rpcUrl: process.env.PRECOMPUTE_RPC,
+          maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900,
+        });
+        if (!trades.length) continue; // dead wallet: keep the previous good snapshot instead of an empty report
+        const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades);
+        fresh.set(address, { ...report, reconciled, reconcileFailed, classifyFailed, coverage, ambiguous, transfersCount: tfs.length });
+      } catch (e) {
+        console.error(`[stockbasis] precompute ${address.slice(0, 8)} failed: ${String(e?.message ?? e).slice(0, 80)}`);
+      }
     }
+    // stale-but-good beats fresh-and-empty: only replace entries that rescanned
+    for (const [addr, prev] of precomputed) if (!fresh.has(addr)) fresh.set(addr, prev);
+    precomputed.clear();
+    for (const [k, v] of fresh) precomputed.set(k, v);
+  } finally {
+    precomputeBusy = false;
   }
-  // stale-but-good beats fresh-and-empty: only replace entries that rescanned
-  for (const [addr, prev] of precomputed) if (!fresh.has(addr)) fresh.set(addr, prev);
-  precomputed.clear();
-  for (const [k, v] of fresh) precomputed.set(k, v);
 }
 
 async function loadFeatured() {
@@ -99,9 +109,9 @@ function startJob(address) {
     onWalk: (n) => { job.progress = n; job.phase = "history"; },
     onProgress: (p) => { job.progress = p.scanned; job.trades = p.trades; job.phase = "scan"; },
   })
-    .then(async ({ trades, coverage, ambiguous, transfers: tfs }) => {
+    .then(async ({ trades, coverage, ambiguous, classifyFailed, transfers: tfs }) => {
       const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades);
-      job.result = { ...report, reconciled, reconcileFailed, coverage, ambiguous, transfersCount: tfs.length };
+      job.result = { ...report, reconciled, reconcileFailed, classifyFailed, coverage, ambiguous, transfersCount: tfs.length };
       job.status = "done";
       job.finished = Date.now();
     })
@@ -202,11 +212,15 @@ let statsCache = null;
 async function marketStats() {
   if (statsCache && Date.now() - statsCache.at < 10 * 60 * 1000) return statsCache.data;
 
-  const stocks = JSON.parse(await readFile(path.join(dataDir, "stocks.json"), "utf8"));
+  // an unreadable stocks.json must degrade to an empty strip, not destroy the
+  // response socket (the read sits outside the network try below)
+  let stocks = {};
+  try { stocks = JSON.parse(await readFile(path.join(dataDir, "stocks.json"), "utf8")); } catch { /* empty strip */ }
   const mints = Object.keys(stocks);
   const out = { volume24hUsd: 0, trackedTokens: mints.length, tokensWithPools: 0, top: [] };
 
   try {
+    if (mints.length) {
     const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(",")}`, { signal: AbortSignal.timeout(8000) });
     if (res.ok) {
       const pairs = await res.json();
@@ -224,6 +238,7 @@ async function marketStats() {
       out.volume24hUsd = Math.round(out.volume24hUsd);
       out.top.sort((a, b) => b.volume24hUsd - a.volume24hUsd);
       out.top = out.top.slice(0, 5);
+    }
     }
   } catch {
     // stale or empty strip beats a broken page

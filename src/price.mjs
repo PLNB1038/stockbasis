@@ -1,6 +1,8 @@
 // WSOL cash legs need a SOL price; USDC/USDT legs are already dollar-denominated.
 
 const dayCache = new Map(); // yyyy-mm-dd -> usd
+const missCache = new Map(); // yyyy-mm-dd -> Date.now() of the last failed lookup
+const MISS_TTL_MS = 5 * 60 * 1000;
 
 /**
  * SOL price at a given unix timestamp (per-day resolution, cached).
@@ -10,8 +12,13 @@ const dayCache = new Map(); // yyyy-mm-dd -> usd
 export async function solUsdOn(ts) {
   const day = new Date(ts * 1000).toISOString().slice(0, 10);
   if (dayCache.has(day)) return dayCache.get(day);
+  // a throttling API must not be re-asked per trade: without the miss cache a
+  // 429 day burns 2 fetch timeouts + backoff on EVERY WSOL trade of that day
+  const miss = missCache.get(day);
+  if (miss && Date.now() - miss < MISS_TTL_MS) return null;
   const usd = await fromCoinGeckoHistory(day);
   if (usd != null) dayCache.set(day, usd);
+  else missCache.set(day, Date.now());
   return usd; // null → caller must treat the cash leg as unpriced
 }
 

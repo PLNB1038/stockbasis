@@ -17,7 +17,11 @@ export async function buildReport(trades) {
   }
 
   const metas = new Map();
-  for (const mint of byMint.keys()) metas.set(mint, await lookupToken(mint));
+  for (const mint of byMint.keys()) {
+    // a classification outage must not discard a finished scan: unknown rows
+    // beat no report (perStockSummary already renders a null meta as "unknown")
+    try { metas.set(mint, await lookupToken(mint)); } catch { metas.set(mint, null); }
+  }
 
   const rows = perStockSummary(byMint, (m) => metas.get(m));
 

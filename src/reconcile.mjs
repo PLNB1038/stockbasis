@@ -5,7 +5,7 @@
 // booked as basis-less movements — disposals we could not see get no invented
 // proceeds, deposits we could not see get no invented basis.
 
-import { rpc } from "./rpc.mjs";
+import { rpc, rpcEndpoints } from "./rpc.mjs";
 import { buildReport } from "./report.mjs";
 
 /**
@@ -31,9 +31,12 @@ export function diffAdjustments(rows, balances) {
 /** Live on-chain balances for the given mints. One filtered call per mint —
  * the unfiltered "all accounts" answer is too large for public RPC on active
  * wallets, while per-mint queries are small and reliable.
+ * An empty 200-OK answer is confirmed on a mirror that did not serve it
+ * before it is allowed to zero out a position (same rule the -32020 path
+ * already follows: one mirror's hole is not a chain fact).
  * @returns {Promise<{balances: Map<string, number>, failed: number}>}
  */
-async function walletBalances(address, mints) {
+async function walletBalances(address, mints, opts = {}) {
   const balances = new Map();
   let failed = 0;
   for (const mint of mints) {
@@ -41,8 +44,23 @@ async function walletBalances(address, mints) {
     // mixes a filter key with config keys like encoding
     // a failed balance read must SKIP the mint: recording a zero would wipe
     // real open positions from the report on a transient RPC hiccup
-    const res = await rpc("getTokenAccountsByOwner", [address, { mint }, { encoding: "jsonParsed" }]).catch(() => null);
+    const res = await rpc("getTokenAccountsByOwner", [address, { mint }, { encoding: "jsonParsed" }], opts).catch(() => null);
     if (!res) { failed++; continue; }
+    if (!res.value?.length) {
+      // empty answer: maybe the wallet truly sold out — or this mirror just
+      // does not index token accounts. Zeroing positions is destructive, so
+      // demand a second, independent mirror's agreement first
+      const { others } = rpcEndpoints(opts);
+      if (others.length) {
+        const confirm = await rpc("getTokenAccountsByOwner", [address, { mint }, { encoding: "jsonParsed" }], { ...opts, rpcUrl: others.join(",") }).catch(() => null);
+        if (!confirm) { failed++; continue; } // cannot verify: leave the scan result standing
+        let q = 0;
+        for (const a of confirm.value ?? []) q += a.account?.data?.parsed?.info?.tokenAmount?.uiAmount ?? 0;
+        balances.set(mint, q);
+        continue;
+      }
+      // single-endpoint setup: nothing to cross-check with — trust the answer
+    }
     let q = 0;
     for (const a of res?.value ?? []) q += a.account?.data?.parsed?.info?.tokenAmount?.uiAmount ?? 0;
     balances.set(mint, q);
@@ -54,11 +72,11 @@ async function walletBalances(address, mints) {
  * Build the report, then true up open positions against the chain and rebuild.
  * @returns {Promise<{report: object, reconciled: number}>}
  */
-export async function buildReconciledReport(address, trades, { now = () => Math.floor(Date.now() / 1000) } = {}) {
+export async function buildReconciledReport(address, trades, { now = () => Math.floor(Date.now() / 1000), rpcUrl } = {}) {
   const report = await buildReport(trades);
   let out;
   try {
-    out = await walletBalances(address, report.rows.map((r) => r.mint));
+    out = await walletBalances(address, report.rows.map((r) => r.mint), { rpcUrl });
   } catch {
     return { report, reconciled: 0, reconcileFailed: 0 }; // chain unreadable right now — the scan result stands
   }

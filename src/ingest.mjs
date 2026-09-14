@@ -40,6 +40,7 @@ export async function ingestWallet(address, opts = {}) {
   /** @type {Trade[]} */
   const trades = [];
   const transfers = [];
+  const stats = { classifyFailed: 0 }; // mints we could not classify (network/API), not "not a stock"
   const started = Date.now();
   const maxTx = opts.maxScanTx ?? 1500;
   const target = opts.targetStockTrades ?? 30;
@@ -69,7 +70,7 @@ export async function ingestWallet(address, opts = {}) {
         signature: s.signature,
         solDelta: walletSolDelta(tx, address), // lamports; catches WSOL legs that open+close in one tx
       };
-      await pairTrades(deltas, ctx, trades, transfers);
+      await pairTrades(deltas, ctx, trades, transfers, stats);
     }
     opts.onProgress?.({ scanned, trades: trades.length, budget: maxTx });
   }
@@ -86,6 +87,7 @@ export async function ingestWallet(address, opts = {}) {
     seen: scanned,
     corrected,
     ambiguous,
+    classifyFailed: stats.classifyFailed,
     coverage: { fromTs: lastFetched?.blockTime ?? null, toTs: sigs[0]?.blockTime ?? null, scanned },
   };
 }
@@ -215,7 +217,7 @@ export function tokenDeltas(meta, owner) {
  */
 const MIN_SOL_LEG = Number(process.env.MIN_SOL_LEG ?? 0.01); // SOL: below this a delta is rent/fee dust, not a cash leg
 
-export async function pairTrades(deltas, ctx, trades, transfers) {
+export async function pairTrades(deltas, ctx, trades, transfers, stats = { classifyFailed: 0 }) {
   // net movements per mint first — dust in a second token account of the same
   // mint must not become a second "trade"; fully-cancelled mints drop out
   const net = new Map();
@@ -232,6 +234,7 @@ export async function pairTrades(deltas, ctx, trades, transfers) {
       metas.set(mint, await lookupToken(mint));
     } catch {
       metas.set(mint, null); // unclassifiable right now: non-stock, other legs still trade
+      stats.classifyFailed++; // surfaced by the caller — silence here would fake "no trades found"
     }
   }
 

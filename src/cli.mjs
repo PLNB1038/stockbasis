@@ -15,12 +15,13 @@ if (!cmd || !address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
 }
 
 console.error(`[stockbasis] scanning ${address} ...`);
-const { trades, transfers, seen, coverage } = await ingestWallet(address, {
+const { trades, transfers, seen, coverage, classifyFailed } = await ingestWallet(address, {
   maxScanTx: Number(process.env.INGEST_MAX_SCAN_TX ?? 1500),
   targetStockTrades: Number(process.env.INGEST_TARGET_TRADES ?? 30),
   onProgress: (p) => { if (p.scanned % 50 === 0) console.error(`  ...${p.scanned} txs, ${p.trades} stock trades`); },
 });
 console.error(`[stockbasis] ${seen} txs → ${trades.length} trades, ${transfers.length} transfers`);
+if (classifyFailed) console.error(`[stockbasis] WARNING: ${classifyFailed} token lookups failed — some stock trades may be missing from this report; rescan`);
 
 if (cmd === "scan") {
   const mints = [...new Set(trades.map((t) => t.mint))];
