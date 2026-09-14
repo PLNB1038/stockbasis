@@ -67,7 +67,7 @@ test("rent reclaim after a withdrawal is not a micro-sale", async () => {
   // gift-out 10 TSLAx + own-ATA rent reclaim (+0.00204 SOL) — must not book a dust "sell"
   await pairTrades([{ mint: TSLAX, delta: -10 }], { ts: 1, signature: "s1", solDelta: 2_040_000 }, trades, transfers);
   assert.equal(trades.filter((t) => t.side === "sell").length, 0);
-  assert.equal(trades.find((t) => t.side === "out")?.qty, 10); // движение, не продажа
+  assert.equal(trades.find((t) => t.side === "out")?.qty, 10); // a movement, not a sale
 });
 
 test("invisible SOL leg books a buy above the dust floor", async () => {

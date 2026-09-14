@@ -37,7 +37,7 @@ async function walletBalances(address, mints) {
   const balances = new Map();
   let failed = 0;
   for (const mint of mints) {
-    // strict 3-param form: some providers (Helius) reject a filter object that
+    // strict 3-param form: some providers reject a filter object that
     // mixes a filter key with config keys like encoding
     // a failed balance read must SKIP the mint: recording a zero would wipe
     // real open positions from the report on a transient RPC hiccup
