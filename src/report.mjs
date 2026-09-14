@@ -40,6 +40,9 @@ export async function buildReport(trades) {
     totalRealized: Math.round(rows.reduce((s, r) => s + r.realizedUsd, 0) * 100) / 100,
     totalAssumed: Math.round(rows.reduce((s, r) => s + (r.realizedAssumed ?? 0), 0) * 100) / 100,
     unknownBasis: rows.reduce((s, r) => s + (r.unknownBasis ?? 0), 0),
+    // real disposals inside multi-token aggregator routes: lots are consumed,
+    // but the cash cannot be split across legs — disclosed, never guessed
+    aggregatedDisposals: trades.filter((t) => t.aggregated && t.side === "out").length,
     priceCorrections: trades.filter((t) => t.priceCorrected).length,
     tokens: rows.length,
   };

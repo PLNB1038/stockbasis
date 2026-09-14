@@ -43,11 +43,18 @@ export function fifoBasis(trades) {
   let realizedBuyUsd = 0;
   let realizedAssumed = 0;
 
+  // the optional market-basis assumption values unknown-basis disposals at a
+  // market quote — but the quote is fetched at report time, so it is a fair
+  // stand-in only for a RECENT disposal. Valuing an old sale against today's
+  // spot would invent P&L out of thin air.
+  const assumable = (t) => Number.isFinite(t.marketPx) && t.marketPx > 0
+    && (t.marketPxAt ?? t.ts) - t.ts <= 7 * 86400;
+
   // a disposal consumes whichever inventory is older — known lots or earlier
   // custody deposits. Deposits-first is the conservative reading: when the
   // chain cannot say which shares were sold, profit is not invented.
   const consumeOldest = (need, perUnit, t) => {
-    while (need >= 1e-9) {
+    while (need >= 1e-12) {
       const lot = lots[0];
       const unk = unknownQ[0];
       const lotTs = lot ? lot.ts : Infinity;
@@ -57,12 +64,12 @@ export function fifoBasis(trades) {
         const take = Math.min(unk.qty, need);
         const proceeds = take * perUnit;
         unknownBasis.push({ soldTs: t.ts, qty: take, proceedsUsd: proceeds });
-        if (Number.isFinite(t.marketPx) && t.marketPx > 0) {
+        if (assumable(t)) {
           realizedAssumed += proceeds - take * t.marketPx;
         }
         unk.qty -= take;
         need -= take;
-        if (unk.qty <= 1e-9) unknownQ.shift();
+        if (unk.qty <= 1e-12) unknownQ.shift();
       } else {
         const take = Math.min(lot.qty, need);
         const cost = (take / lot.qty) * lot.costUsd;
@@ -74,7 +81,7 @@ export function fifoBasis(trades) {
         lot.qty -= take;
         lot.costUsd -= cost;
         need -= take;
-        if (lot.qty <= 1e-9) lots.shift();
+        if (lot.qty <= 1e-12) lots.shift();
       }
     }
     return need;
@@ -90,7 +97,7 @@ export function fifoBasis(trades) {
     // inventory is older, no proceeds, no P&L (a movement, not a disposal)
     if (t.side === "out") {
       let need = t.qty;
-      while (need >= 1e-9) {
+      while (need >= 1e-12) {
         const lot = lots[0];
         const unk = unknownQ[0];
         const lotTs = lot ? lot.ts : Infinity;
@@ -100,14 +107,14 @@ export function fifoBasis(trades) {
           const take = Math.min(unk.qty, need);
           unk.qty -= take;
           need -= take;
-          if (unk.qty <= 1e-9) unknownQ.shift();
+          if (unk.qty <= 1e-12) unknownQ.shift();
         } else {
           const take = Math.min(lot.qty, need);
           const cost = (take / lot.qty) * lot.costUsd;
           lot.qty -= take;
           lot.costUsd -= cost;
           need -= take;
-          if (lot.qty <= 1e-9) lots.shift();
+          if (lot.qty <= 1e-12) lots.shift();
         }
       }
       continue;
@@ -118,14 +125,15 @@ export function fifoBasis(trades) {
     }
 
     // sell: consume inventory oldest-first (known lots book closes, custody
-    // deposits book unknown-basis disposals). Dust below 1e-9 units is
-    // physically impossible for real tokens (min unit = 10^-decimals ≥ 1e-8).
+    // deposits book unknown-basis disposals). Dust below 1e-12 units is three
+    // orders below the smallest real movement: SPL mints go up to 9 decimals,
+    // so a single unit (1e-9) must survive the filter.
     if (!(t.qty > 0) || !Number.isFinite(t.valueUsd)) continue; // degenerate, never book NaN
     const need = consumeOldest(t.qty, t.valueUsd / t.qty, t);
-    if (need >= 1e-9) {
+    if (need >= 1e-12) {
       const proceeds = need * (t.valueUsd / t.qty);
       unknownBasis.push({ soldTs: t.ts, qty: need, proceedsUsd: proceeds });
-      if (Number.isFinite(t.marketPx) && t.marketPx > 0) {
+      if (assumable(t)) {
         realizedAssumed += proceeds - need * t.marketPx;
       }
     }

@@ -44,15 +44,22 @@ async function walletBalances(address, mints, opts = {}) {
     // mixes a filter key with config keys like encoding
     // a failed balance read must SKIP the mint: recording a zero would wipe
     // real open positions from the report on a transient RPC hiccup
-    const res = await rpc("getTokenAccountsByOwner", [address, { mint }, { encoding: "jsonParsed" }], opts).catch(() => null);
+    let answeredBy; // the mirror that served this answer, for exclusion below
+    const res = await rpc("getTokenAccountsByOwner", [address, { mint }, { encoding: "jsonParsed" }], {
+      ...opts,
+      onEndpoint: (u) => { answeredBy = u; },
+    }).catch(() => null);
     if (!res) { failed++; continue; }
     if (!res.value?.length) {
       // empty answer: maybe the wallet truly sold out — or this mirror just
       // does not index token accounts. Zeroing positions is destructive, so
-      // demand a second, independent mirror's agreement first
-      const { others } = rpcEndpoints(opts);
-      if (others.length) {
-        const confirm = await rpc("getTokenAccountsByOwner", [address, { mint }, { encoding: "jsonParsed" }], { ...opts, rpcUrl: others.join(",") }).catch(() => null);
+      // demand agreement from mirrors OTHER than the one that just answered
+      // (the global rotator index can drift between the two calls — only the
+      // answering mirror itself is a safe exclusion)
+      const { current, others } = rpcEndpoints(opts);
+      const verify = (answeredBy ? [current, ...others] : others).filter((u) => u !== answeredBy);
+      if (verify.length) {
+        const confirm = await rpc("getTokenAccountsByOwner", [address, { mint }, { encoding: "jsonParsed" }], { ...opts, rpcUrl: verify.join(",") }).catch(() => null);
         if (!confirm) { failed++; continue; } // cannot verify: leave the scan result standing
         let q = 0;
         for (const a of confirm.value ?? []) q += a.account?.data?.parsed?.info?.tokenAmount?.uiAmount ?? 0;

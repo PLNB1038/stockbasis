@@ -29,6 +29,7 @@ export const WSOL = "So11111111111111111111111111111111111111112";
  * @returns {Promise<{trades: Trade[], transfers: object[], seen: number}>}
  */
 export async function ingestWallet(address, opts = {}) {
+  const signal = opts.signal;
   const sigs = [];
   for await (const s of allSignatures(address, opts)) {
     if (s.err) continue; // failed txs changed nothing
@@ -36,6 +37,7 @@ export async function ingestWallet(address, opts = {}) {
     opts.onWalk?.(sigs.length);
     if (sigs.length >= (opts.maxScanTx ?? 1500)) break; // no point walking past the fetch budget
   }
+  if (signal?.aborted) throw new Error("scan aborted");
   // allSignatures yields newest-first; scan that direction and stop on budget
   /** @type {Trade[]} */
   const trades = [];
@@ -51,6 +53,7 @@ export async function ingestWallet(address, opts = {}) {
     // the trade target counts buys and sells only: transfers and custody
     // movements must not cut the scan short on transfer-heavy wallets
     const bsCount = trades.reduce((s, t) => s + (t.side === "buy" || t.side === "sell" ? 1 : 0), 0);
+    if (signal?.aborted) throw new Error("scan aborted");
     if (scanned >= maxTx || bsCount >= target || Date.now() - started > timeBudgetMs) break;
 
     const chunk = sigs.slice(i, i + TX_CONCURRENCY);
@@ -68,6 +71,7 @@ export async function ingestWallet(address, opts = {}) {
         ts: s.blockTime ?? 0,
         slot: s.slot,
         signature: s.signature,
+        signal, // reaches lookupToken: an aborted scan stops paying for metadata too
         solDelta: walletSolDelta(tx, address), // lamports; catches WSOL legs that open+close in one tx
       };
       await pairTrades(deltas, ctx, trades, transfers, stats);
@@ -111,9 +115,14 @@ export function applySanityGate(trades, prices, now) {
     const px = prices.get(t.mint);
     if (!px) continue;
     t.marketPx = px; // used by the optional market-basis assumption
+    t.marketPxAt = now; // and the assumption is only valid while the quote is fresh for the trade
     if (t.qty <= 0 || t.valueUsd <= 0) continue;
     const implied = t.valueUsd / t.qty;
-    if (implied <= px * 1.3 && implied >= px * 0.7) continue;
+    // a weekly price move can push a FAIR implied price well outside ±30%;
+    // repricing such a trade at today's spot would rewrite cash the wallet
+    // actually paid. Only a price the market cannot explain (>=2x off) is
+    // treated as aggregator garbage and repriced/converted to a movement.
+    if (implied <= px * 2 && implied >= px * 0.5) continue;
 
     if (now - t.ts < 7 * 86400) {
       // recent: today's spot is a fair stand-in for the trade-time price
@@ -183,7 +192,7 @@ export function tokenDeltas(meta, owner) {
     const before = pre.get(k);
     const was = num(before?.uiTokenAmount) ?? 0;
     const now = num(pb.uiTokenAmount) ?? 0;
-    if (Math.abs(now - was) > 1e-9 && pb.owner === owner) {
+    if (Math.abs(now - was) > 1e-12 && pb.owner === owner) {
       out.push({ mint: pb.mint, delta: now - was });
     }
   }
@@ -191,7 +200,7 @@ export function tokenDeltas(meta, owner) {
   for (const [k, pb] of pre) {
     if (post.some(([pk]) => pk === k)) continue;
     const was = num(pb.uiTokenAmount) ?? 0;
-    if (Math.abs(was) > 1e-9 && pb.owner === owner) out.push({ mint: pb.mint, delta: -was });
+    if (Math.abs(was) > 1e-12 && pb.owner === owner) out.push({ mint: pb.mint, delta: -was });
   }
   return out;
 
@@ -219,11 +228,13 @@ const MIN_SOL_LEG = Number(process.env.MIN_SOL_LEG ?? 0.01); // SOL: below this 
 
 export async function pairTrades(deltas, ctx, trades, transfers, stats = { classifyFailed: 0 }) {
   // net movements per mint first — dust in a second token account of the same
-  // mint must not become a second "trade"; fully-cancelled mints drop out
+  // mint must not become a second "trade"; fully-cancelled mints drop out.
+  // 1e-12 is three orders below the smallest real movement: SPL mints go up
+  // to 9 decimals, so a single unit is 1e-9 and must NOT be filtered here.
   const net = new Map();
   for (const d of deltas) {
     const v = (net.get(d.mint) ?? 0) + d.delta;
-    if (Math.abs(v) > 1e-9) net.set(d.mint, v);
+    if (Math.abs(v) > 1e-12) net.set(d.mint, v);
     else net.delete(d.mint);
   }
 
@@ -231,7 +242,7 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
   for (const mint of net.keys()) {
     if (metas.has(mint)) continue;
     try {
-      metas.set(mint, await lookupToken(mint));
+      metas.set(mint, await lookupToken(mint, { signal: ctx.signal }));
     } catch {
       metas.set(mint, null); // unclassifiable right now: non-stock, other legs still trade
       stats.classifyFailed++; // surfaced by the caller — silence here would fake "no trades found"
@@ -248,11 +259,13 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
   // a multi-stock bundle cannot be decomposed from deltas alone — no greedy
   // guessing which cash leg paid for which share. Record the movements without
   // P&L: outgoing shares consume open lots, incoming create unknown-basis
-  // inventory. Vanishing them would leave phantom open positions.
+  // inventory. Vanishing them would leave phantom open positions. The
+  // aggregated flag marks real disposals whose proceeds cannot be attributed:
+  // the report must disclose them, not drop them silently.
   if (equity.length > 1) {
     for (const e of equity) {
       transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
-      trades.push({ side: e.delta < 0 ? "out" : "in", mint: e.mint, qty: Math.abs(e.delta), valueUsd: 0, ts: ctx.ts, slot: ctx.slot, signature: ctx.signature });
+      trades.push({ side: e.delta < 0 ? "out" : "in", mint: e.mint, qty: Math.abs(e.delta), valueUsd: 0, ts: ctx.ts, slot: ctx.slot, signature: ctx.signature, aggregated: true });
     }
     return;
   }

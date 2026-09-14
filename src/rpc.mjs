@@ -15,7 +15,7 @@ export class RpcError extends Error {
   }
 }
 
-let lastCall = 0;
+const lastCallByUrl = new Map(); // endpoint URL -> ms of its last call start: pacing is per mirror
 let endpointIdx = 0;
 
 function endpoints(opts) {
@@ -39,7 +39,10 @@ export function rpcEndpoints(opts = {}) {
  * Call a Solana JSON-RPC method.
  * @param {string} method
  * @param {unknown[]} params
- * @param {{rpcUrl?: string}} [opts]
+ * @param {{rpcUrl?: string, signal?: AbortSignal, onEndpoint?: (url: string) => void}} [opts]
+ *   signal: aborts the call (a timed-out scan must free its RPC slots, not
+ *   keep burning the shared queue as a zombie). onEndpoint: fired with the
+ *   URL that produced the returned answer, for cross-endpoint verification.
  * @returns {Promise<any>} result field of the response
  */
 let rpcQueue = Promise.resolve();
@@ -53,6 +56,7 @@ export function rpc(method, params, opts = {}) {
 }
 
 async function rpcInner(method, params, opts = {}) {
+  const signal = opts.signal;
   const urls = endpoints(opts);
   // endpoints that answered -32020 ("not found") for THIS call: a public mirror
   // lacking old transactions is a per-endpoint data hole, not a chain fact —
@@ -60,17 +64,19 @@ async function rpcInner(method, params, opts = {}) {
   const holes = new Set();
 
   for (let attempt = 0; ; attempt++) {
-    // pace: at least MIN_INTERVAL_MS between calls
-    const wait = lastCall + MIN_INTERVAL_MS - Date.now();
-    if (wait > 0) await sleep(wait);
-    lastCall = Date.now();
+    if (signal?.aborted) throw new Error(`RPC ${method}: aborted`);
     const url = urls[endpointIdx % urls.length];
+    // pace per endpoint: a background scan hammering public mirrors must not
+    // eat the pacing budget of an interactive call to a different mirror
+    const wait = (lastCallByUrl.get(url) ?? 0) + MIN_INTERVAL_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastCallByUrl.set(url, Date.now());
 
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      signal: AbortSignal.timeout(15000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
     });
 
     if (res.status === 429 || res.status >= 500) {
@@ -99,6 +105,7 @@ async function rpcInner(method, params, opts = {}) {
       await sleep(2 ** Math.min(attempt, 4) * 750);
       continue;
     }
+    opts.onEndpoint?.(url); // the mirror this answer came from
     return body.result;
   }
 }

@@ -33,7 +33,7 @@ if (cmd === "scan") {
 }
 
 const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades);
-const { rows, closes, totalRealized } = report;
+const { rows, closes, totalRealized, aggregatedDisposals } = report;
 
 if (cmd === "csv") {
   const file = `stockbasis-${address.slice(0, 8)}.csv`;
@@ -44,6 +44,7 @@ if (cmd === "csv") {
   console.log(`TOTAL realized P&L: ${totalRealized.toFixed(2)} USD across ${rows.length} stock tokens`);
   if (reconciled) console.log(`open positions reconciled to on-chain balances: ${reconciled} token(s) adjusted`);
   if (reconcileFailed) console.log(`on-chain balance unavailable for ${reconcileFailed} token(s) — those positions stay as scanned`);
+  if (aggregatedDisposals) console.log(`${aggregatedDisposals} disposal(s) inside multi-token aggregator routes — cash cannot be split across legs, proceeds not attributed`);
   if (coverage?.fromTs) {
     const day = (ts) => new Date(ts * 1000).toISOString().slice(0, 10);
     console.log(`history covered: ${day(coverage.fromTs)} → ${day(coverage.toTs)} (${coverage.scanned} txs scanned)`);

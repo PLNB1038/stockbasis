@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { ingestWallet } from "./ingest.mjs";
 import { buildReconciledReport } from "./reconcile.mjs";
+import { rpcEndpoints } from "./rpc.mjs";
 
 const webDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "web");
 const dataDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
@@ -20,7 +21,9 @@ const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const jobs = new Map();
 
 // finished jobs linger 10 minutes for polling, then make room for new ones;
-// a scan stuck past 6 minutes (hung upstream fetch) is failed as well
+// a scan stuck past 6 minutes (hung upstream fetch) is failed AND cancelled —
+// marking it error without aborting would free the slot while the zombie scan
+// keeps burning the shared RPC queue and its memory
 setInterval(() => {
   const cutoff = Date.now() - 10 * 60 * 1000;
   for (const [id, j] of jobs) {
@@ -29,6 +32,7 @@ setInterval(() => {
       j.status = "error";
       j.error = "scan timed out";
       j.finished = Date.now();
+      try { j.abort?.abort(new Error("scan timed out")); } catch {}
     }
   }
 }, 60 * 1000).unref();
@@ -88,7 +92,7 @@ function startJob(address) {
     if (j.address === address && j.status === "running") return j; // identical scan already in flight
   }
 
-  const job = { id: randomUUID(), address, status: "running", progress: 0, trades: 0, started: Date.now() };
+  const job = { id: randomUUID(), address, status: "running", progress: 0, trades: 0, started: Date.now(), abort: null };
 
   const cached = precomputed.get(address);
   if (cached) {
@@ -103,19 +107,27 @@ function startJob(address) {
   }
   jobs.set(job.id, job);
 
+  const ac = new AbortController();
+  job.abort = ac;
   ingestWallet(address, {
     maxScanTx: MAX_SCAN_TX,
     targetStockTrades: TARGET_TRADES,
-    onWalk: (n) => { job.progress = n; job.phase = "history"; },
-    onProgress: (p) => { job.progress = p.scanned; job.trades = p.trades; job.phase = "scan"; },
+    signal: ac.signal,
+    onWalk: (n) => { if (job.status === "running") { job.progress = n; job.phase = "history"; } },
+    onProgress: (p) => { if (job.status === "running") { job.progress = p.scanned; job.trades = p.trades; job.phase = "scan"; } },
   })
     .then(async ({ trades, coverage, ambiguous, classifyFailed, transfers: tfs }) => {
+      // a timed-out job must not resurrect: if the sweeper already answered
+      // the poller with an error, the late result is discarded
+      if (job.status !== "running") return;
       const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades);
+      if (job.status !== "running") return; // the sweeper may fire mid-report too
       job.result = { ...report, reconciled, reconcileFailed, classifyFailed, coverage, ambiguous, transfersCount: tfs.length };
       job.status = "done";
       job.finished = Date.now();
     })
     .catch((e) => {
+      if (job.status !== "running") return; // the sweeper already reported this one
       job.status = "error";
       job.error = String(e?.message ?? e);
       job.finished = Date.now();
@@ -255,6 +267,19 @@ process.on("unhandledRejection", (e) => console.error("[stockbasis] swallowed re
 server.requestTimeout = 30_000;
 server.headersTimeout = 31_000;
 
-server.listen(PORT, () => console.log(`[stockbasis] http://localhost:${PORT} (scan budget: ${MAX_SCAN_TX} txs or ${TARGET_TRADES} stock trades)`));
+server.listen(PORT, () => {
+  console.log(`[stockbasis] http://localhost:${PORT} (scan budget: ${MAX_SCAN_TX} txs or ${TARGET_TRADES} stock trades)`);
+  // an empty balance answer can only be cross-checked when a second mirror
+  // exists — a single-endpoint setup silently weakens reconciliation
+  const lists = [["interactive", rpcEndpoints()]];
+  if (process.env.PRECOMPUTE_RPC) lists.push(["precompute", rpcEndpoints({ rpcUrl: process.env.PRECOMPUTE_RPC })]);
+  const warned = new Set();
+  for (const [label, { current, others }] of lists) {
+    if (current && !others.length && !warned.has(current)) {
+      warned.add(current);
+      console.error(`[stockbasis] WARNING: single RPC endpoint for ${label} scans (${current}) — empty-balance cross-check disabled`);
+    }
+  }
+});
 // STOCKBASIS_NO_FEATURED=1 skips the background precompute (tests/offline runs)
 if (process.env.STOCKBASIS_NO_FEATURED !== "1") loadFeatured();

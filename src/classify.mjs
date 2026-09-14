@@ -15,7 +15,8 @@ const curated = (() => {
   }
 })();
 
-const cache = new Map(); // mint -> { symbol, name, isStock, tags }
+const cache = new Map(); // mint -> { symbol, name, isStock, tags } | { isNull, nullUntil }
+const NULL_TTL_MS = Number(process.env.CLASSIFY_NULL_TTL_MS ?? 10 * 60 * 1000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // token metadata is attacker-controllable: strip control characters at the
 // source so they never reach terminals, CSV files or API consumers
@@ -23,11 +24,19 @@ const clean = (s) => String(s ?? "").replace(/[\u0000-\u001F\u007F]/g, "");
 
 /**
  * Look up token metadata and stock classification for a mint.
+ * A "no data" answer is cached only for a short TTL: an index-lagging mirror
+ * must not blind the process to a stock for its whole lifetime.
  * @param {string} mint
+ * @param {{signal?: AbortSignal}} [opts]
  * @returns {Promise<{symbol: string, name: string, isStock: boolean, tags: string[]} | null>}
  */
-export async function lookupToken(mint) {
-  if (cache.has(mint)) return cache.get(mint);
+export async function lookupToken(mint, { signal } = {}) {
+  const hit = cache.get(mint);
+  if (hit !== undefined) {
+    if (!hit.isNull) return hit;
+    if (Date.now() < hit.nullUntil) return null;
+    cache.delete(mint); // stale no-data: ask again
+  }
 
   if (curated[mint]) {
     const out = { symbol: clean(curated[mint].symbol), name: clean(curated[mint].name), isStock: true, tags: ["curated"] };
@@ -37,7 +46,9 @@ export async function lookupToken(mint) {
 
   let out = null;
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(`${SEARCH_URL}?query=${encodeURIComponent(mint)}`, { signal: AbortSignal.timeout(8000) });
+    if (signal?.aborted) throw new Error(`token lookup aborted: ${mint}`);
+    const res = await fetch(`${SEARCH_URL}?query=${encodeURIComponent(mint)}`,
+      { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000) });
     if (res.status === 429 && attempt < 4) {
       await sleep(1500 * 2 ** attempt);
       continue;
@@ -53,7 +64,8 @@ export async function lookupToken(mint) {
     }
     break;
   }
-  cache.set(mint, out); // mints are immutable; cache forever
+  // positive answers are immutable; no-data is only as durable as its TTL
+  cache.set(mint, out ?? { isNull: true, nullUntil: Date.now() + NULL_TTL_MS });
   await sleep(250); // free tier QPS is low
   return out;
 }

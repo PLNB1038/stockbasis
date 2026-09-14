@@ -117,12 +117,13 @@ function render(job) {
 
   const note = $("basis-note");
   const notes = [];
-  if (unknownBasis > 0 && !showAssumed) notes.push(`${unknownBasis} disposal${unknownBasis > 1 ? "s" : ""} with unknown cost basis (bought before the scanned history, or deposited from custody) excluded from P&L — tick the box above to assume market price.`);
+  if (unknownBasis > 0 && !showAssumed) notes.push(`${unknownBasis} disposal${unknownBasis > 1 ? "s" : ""} with unknown cost basis (bought before the scanned history, or deposited from custody) excluded from P&L — tick the box above to assume market price for recent disposals (a current quote says nothing about an old sale's basis).`);
   if ((job.result.priceCorrections ?? 0) > 0) notes.push(`${job.result.priceCorrections} recent trade${job.result.priceCorrections > 1 ? "s" : ""} valued at market price (cash leg ambiguous in an aggregated route).`);
   if ((job.result.ambiguous ?? 0) > 0) notes.push(`${job.result.ambiguous} older trade${job.result.ambiguous > 1 ? "s" : ""} excluded from P&L as ambiguous (aggregated route, no reliable historical price — the shares still left the inventory).`);
   if ((job.result.reconciled ?? 0) > 0) notes.push(`${job.result.reconciled} position${job.result.reconciled > 1 ? "s" : ""} from the scanned window reconciled to on-chain balances (some movements were not retrievable from public RPC).`);
   if ((job.result.reconcileFailed ?? 0) > 0) notes.push(`On-chain balance unavailable for ${job.result.reconcileFailed} token${job.result.reconcileFailed > 1 ? "s" : ""} — those positions are shown as scanned.`);
   if ((job.result.classifyFailed ?? 0) > 0) notes.push(`Token classification unavailable for ${job.result.classifyFailed} lookup${job.result.classifyFailed > 1 ? "s" : ""} — the report may miss stock trades; please rescan.`);
+  if ((job.result.aggregatedDisposals ?? 0) > 0) notes.push(`${job.result.aggregatedDisposals} disposal${job.result.aggregatedDisposals > 1 ? "s" : ""} happened inside multi-token aggregator routes — the cash leg cannot be split across legs, so those proceeds are shown as movements rather than attributed P&L.`);
   if (notes.length) {
     note.textContent = notes.join(" ");
     note.hidden = false;
