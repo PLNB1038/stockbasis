@@ -89,6 +89,38 @@ test("sub-floor SOL deltas never book sales", async () => {
   assert.equal(trades.find((t) => t.side === "out")?.qty, 1);
 });
 
+test("same-sign cash legs net before pricing, not after", async () => {
+  // buy 1 TSLAx paying 250 USDC while 100 USDC comes back in the same tx
+  // (aggregator cashback): the netted cash leg is -150, so valueUsd must be
+  // 150 — the cash actually spent, never 250 (gross) or 350 (both legs summed)
+  primeTokenCache(TSLAX, { symbol: "TSLAx", name: "", isStock: true, tags: [] });
+  const trades = [];
+  await pairTrades(
+    [{ mint: TSLAX, delta: 1 }, { mint: USDC, delta: -250 }, { mint: USDC, delta: 100 }],
+    { ts: 1700000002, signature: "s6", solDelta: 0 },
+    trades, [],
+  );
+  const buy = trades.find((t) => t.side === "buy");
+  assert.ok(buy, "buy not recorded");
+  assert.ok(Math.abs(buy.valueUsd - 150) < 1e-6, `cash netting wrong: ${buy.valueUsd}`);
+});
+
+test("receiving stock and cash together is a deposit, never an invented trade", async () => {
+  // a wallet receives 1 TSLAx AND 50 USDC in one tx (referral bonus, rebate):
+  // pairing same-sign legs would book a fake 'sell' with wrong proceeds —
+  // the honest record is a basis-less deposit
+  primeTokenCache(TSLAX, { symbol: "TSLAx", name: "", isStock: true, tags: [] });
+  const trades = [], transfers = [];
+  await pairTrades(
+    [{ mint: TSLAX, delta: 1 }, { mint: USDC, delta: 50 }],
+    { ts: 1700000003, signature: "s7", solDelta: 0 },
+    trades, transfers,
+  );
+  assert.equal(trades.filter((t) => t.side === "buy" || t.side === "sell").length, 0);
+  assert.equal(trades.find((t) => t.side === "in")?.qty, 1);
+  assert.equal(trades[0].valueUsd, 0);
+});
+
 test("multi-leg bundle books movements, not vanishing shares", async () => {
   primeTokenCache(TSLAX, { symbol: "TSLAx", name: "", isStock: true, tags: [] });
   primeTokenCache(OTHERX, { symbol: "OTHERx", name: "", isStock: true, tags: [] });
