@@ -47,7 +47,10 @@ export async function ingestWallet(address, opts = {}) {
   let scanned = 0;
 
   for (let i = 0; i < sigs.length; i += TX_CONCURRENCY) {
-    if (scanned >= maxTx || trades.length >= target || Date.now() - started > timeBudgetMs) break;
+    // the trade target counts buys and sells only: transfers and custody
+    // movements must not cut the scan short on transfer-heavy wallets
+    const bsCount = trades.reduce((s, t) => s + (t.side === "buy" || t.side === "sell" ? 1 : 0), 0);
+    if (scanned >= maxTx || bsCount >= target || Date.now() - started > timeBudgetMs) break;
 
     const chunk = sigs.slice(i, i + TX_CONCURRENCY);
     // no .catch here: a sustained RPC failure must reject the scan, not skip txs

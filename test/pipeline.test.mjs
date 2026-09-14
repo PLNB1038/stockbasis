@@ -268,6 +268,27 @@ test("ingest: a sustained RPC failure fails the scan instead of skipping transac
   }
 });
 
+test("transfer-heavy wallets: custody movements never cut the scan short", async () => {
+  // two movements + one buy; the target of 2 must count the BUY only, so the
+  // scan walks past the movements and finds the trade
+  const t = now();
+  const { sigs, txs } = buildHistory([
+    { ts: t - 3 * HOUR, dTslax: 5 },   // custody deposit (movement)
+    { ts: t - 2 * HOUR, dTslax: -2 },  // withdrawal (movement)
+    { ts: t - 1 * HOUR, dTslax: 1, dUsdc: -250 }, // the only actual trade
+  ]);
+  const fake = await fakeRpc({
+    getSignaturesForAddress: () => ({ result: sigs }),
+    getTransaction: (p) => ({ result: txs.get(p[0]) ?? null }),
+  });
+  try {
+    const { trades } = await ingestWallet(OWNER, { rpcUrl: fake.url, targetStockTrades: 2 });
+    assert.ok(trades.some((x) => x.side === "buy" && x.qty === 1), "the buy after the movements was never scanned");
+  } finally {
+    fake.server.close();
+  }
+});
+
 test("classify: a fuzzy-search lookalike never replaces the exact mint", async () => {
   const mint = "Looka1ikeMint11111111111111111111111111111111";
   const srv = http.createServer((req, res) => {

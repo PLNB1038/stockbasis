@@ -141,14 +141,9 @@ function render(job) {
       <td class="num">${fmt(c.costUsd)}</td>
       <td class="num ${c.pnlUsd >= 0 ? "pos" : "neg"}">${fmt(c.pnlUsd)}</td>
     </tr>`).join("");
-  if (closes.length > 100) {
-    $("dnote").textContent = `Showing 100 of ${closes.length} disposals — the full list is in the CSV.`;
-    $("dnote").hidden = false;
-  } else if (closes.length) {
-    $("dnote").hidden = true;
-  }
-  $("dtable").hidden = !closes.length;
+  $("dnote").textContent = closes.length > 100 ? `Showing 100 of ${closes.length} disposals — the full list is in the CSV.` : "";
   $("dnote").hidden = closes.length <= 100;
+  $("dtable").hidden = !closes.length;
 
   $("rows").innerHTML = rows.map((r) => {
     const noBasis = r.wins + r.losses === 0 && r.unknownBasis > 0 && !showAssumed;
