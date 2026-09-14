@@ -37,7 +37,7 @@ when basis is unknown.
 
 ## Who it is for
 
-- **Tokenized-equity holders** (727k+ addresses and growing) who need a statement
+- **Tokenized-equity holders** (hundreds of thousands of addresses and growing) who need a statement
   they can file or hand to an accountant.
 - **Accountants and tax preparers** — the CSV follows the 1099-B shape:
   acquired date, sold date, proceeds, cost basis, gain per disposal.
@@ -80,8 +80,11 @@ Jupiter tags it, with a curated list as fallback.
 ## Tests
 
 `npm test` — FIFO engine (unit cases, randomized property tests against an
-independent reference implementation), transaction reconstruction on real
-mainnet fixtures (multi-account and epsilon-boundary edge cases), CSV output.
+independent reference implementation), adversarial transaction reconstruction
+(hostile chain-data shapes, conservation invariants), a chaos suite that runs
+the full pipeline against fake RPC providers (hard outages, garbage responses,
+data holes), live-server contract tests, and repo-hygiene meta-tests
+(base58-validity of every mint constant, dead-export detection).
 
 ## License
 
