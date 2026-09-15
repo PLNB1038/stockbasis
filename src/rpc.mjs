@@ -70,6 +70,10 @@ async function rpcInner(method, params, opts = {}) {
   // lacking old transactions is a per-endpoint data hole, not a chain fact —
   // only when every endpoint says "not found" may the caller treat it as real
   const holes = new Set();
+  // the -32020 rotation gets its OWN budget: sharing the attempt cap with the
+  // 429 backoff let one throttled mirror burn the budget and masquerade as a
+  // confirmed "all mirrors lack this tx" hole, silently truncating history
+  let holeSkips = 0;
 
   for (let attempt = 0; ; attempt++) {
     if (signal?.aborted) throw new Error(`RPC ${method}: aborted`);
@@ -96,16 +100,32 @@ async function rpcInner(method, params, opts = {}) {
     if (!res.ok) throw new Error(`RPC ${method}: HTTP ${res.status}`);
 
     const body = await res.json();
+    // a 200-OK body with neither result nor error is a broken gateway answer,
+    // not an empty success: returning undefined here would read as "no data,
+    // all clean" to every caller. Rotate and retry like any transient fault.
+    if (body?.result === undefined && body?.error === undefined) {
+      if (attempt >= MAX_RETRIES) throw new Error(`RPC ${method}: HTTP 200 without a JSON-RPC envelope after ${attempt + 1} attempts`);
+      endpointIdx++;
+      await sleep(2 ** Math.min(attempt, 4) * 750);
+      continue;
+    }
     if (body.error) {
       // -32020 "transaction not found": try the remaining mirrors first —
       // the primary usually still serves what a shallow mirror has dropped
       if (body.error.code === -32020) {
         holes.add(urls[endpointIdx % urls.length]);
-        // the attempt cap covers this branch too: a concurrent caller moving
-        // the shared rotation index must not keep us circling holed mirrors
-        if (holes.size < urls.length && attempt < MAX_RETRIES) {
+        // rotate while unvisited mirrors remain, under this branch's own
+        // budget (a concurrent caller moves the shared index — the cap only
+        // stops us from circling holed mirrors forever)
+        if (holes.size < urls.length && holeSkips++ < urls.length * 3) {
           endpointIdx++;
           continue;
+        }
+        if (holes.size < urls.length) {
+          // budget gone with holes unfilled: this is NOT a confirmed hole —
+          // throw a transient error so the scan fails honestly instead of
+          // silently treating unasked mirrors as agreeing
+          throw new Error(`RPC ${method}: -32020 rotation exhausted before every mirror answered (${holes.size}/${urls.length} asked)`);
         }
         throw new RpcError(method, body.error);
       }

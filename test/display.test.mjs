@@ -108,7 +108,7 @@ test("unknown-basis disposals reach the payload and the CSV with their real proc
   assert.equal(report.disposals.length, 1);
   const line = toCsv(report.disposals).split("\n")[1];
   assert.ok(line.includes("5000.00"), `proceeds must be exported (got: ${line})`);
-  assert.ok(/unknown,.*,5000\.00,,$/.test(line), `cost/gain must be empty cells, never a guess (got: ${line})`);
+  assert.ok(/unknown,.*,5000\.00,,,$/.test(line), `cost/gain/assumed must be empty cells, never a guess (got: ${line})`);
 });
 
 test("w/l: a break-even close is neither a win nor a loss", () => {

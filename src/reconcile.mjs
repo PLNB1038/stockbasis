@@ -36,6 +36,19 @@ export function diffAdjustments(rows, balances) {
  * already follows: one mirror's hole is not a chain fact).
  * @returns {Promise<{balances: Map<string, number>, failed: number}>}
  */
+/** Parse a token-amount block the way ingest does: the string form first
+ * (exact), the float form as fallback — and ONLY finite numbers. A null or
+ * garbage uiAmount must fail the read, never silently read as zero. */
+function amount(a) {
+  const s = a?.uiAmountString;
+  if (s != null) {
+    const v = Number(s);
+    if (Number.isFinite(v)) return v;
+  }
+  const v = a?.uiAmount;
+  return Number.isFinite(v) ? v : null;
+}
+
 async function walletBalances(address, mints, opts = {}) {
   const balances = new Map();
   let failed = 0;
@@ -51,7 +64,11 @@ async function walletBalances(address, mints, opts = {}) {
       onEndpoint: (u) => { answeredBy = u; },
     }).catch(() => null);
     if (!res) { failed++; continue; }
-    if (!res.value?.length) {
+    // the answer must be a real account list — any other 200-OK shape (an
+    // empty envelope, a proxy page) is a failed read, never an "empty"
+    // that a second mirror might then "confirm" into wiping a position
+    if (!Array.isArray(res.value)) { failed++; continue; }
+    if (!res.value.length) {
       // empty answer: maybe the wallet truly sold out — or this mirror just
       // does not index token accounts. Zeroing positions is destructive, so
       // demand agreement from mirrors OTHER than the one that just answered
@@ -61,16 +78,32 @@ async function walletBalances(address, mints, opts = {}) {
       const verify = (answeredBy ? [current, ...others] : others).filter((u) => u !== answeredBy);
       if (verify.length) {
         const confirm = await rpc("getTokenAccountsByOwner", [address, { mint }, { encoding: "jsonParsed" }], { ...opts, rpcUrl: verify.join(",") }).catch(() => null);
-        if (!confirm) { failed++; continue; } // cannot verify: leave the scan result standing
+        // the confirming answer must be a real account list: any other 200-OK
+        // shape (empty envelope, proxy page) is NOT agreement with "zero" —
+        // treating it as such wipes positions "after verification"
+        if (!Array.isArray(confirm?.value)) { failed++; continue; } // cannot verify: leave the scan result standing
         let q = 0;
-        for (const a of confirm.value ?? []) q += a.account?.data?.parsed?.info?.tokenAmount?.uiAmount ?? 0;
+        let ok = true;
+        for (const a of confirm.value) {
+          const v = amount(a.account?.data?.parsed?.info?.tokenAmount);
+          if (v == null) { ok = false; break; }
+          q += v;
+        }
+        if (!ok) { failed++; continue; }
         balances.set(mint, q);
         continue;
       }
       // single-endpoint setup: nothing to cross-check with — trust the answer
     }
     let q = 0;
-    for (const a of res?.value ?? []) q += a.account?.data?.parsed?.info?.tokenAmount?.uiAmount ?? 0;
+    let ok = true;
+    for (const a of res?.value ?? []) {
+      const v = amount(a.account?.data?.parsed?.info?.tokenAmount);
+      if (v == null) { ok = false; break; }
+      q += v;
+    }
+    // a non-numeric balance field is a failed read, not a zero balance
+    if (!ok) { failed++; continue; }
     balances.set(mint, q);
   }
   return { balances, failed };
@@ -81,7 +114,7 @@ async function walletBalances(address, mints, opts = {}) {
  * @returns {Promise<{report: object, reconciled: number}>}
  */
 export async function buildReconciledReport(address, trades, { now = () => Math.floor(Date.now() / 1000), rpcUrl, signal } = {}) {
-  const report = await buildReport(trades);
+  const report = await buildReport(trades, { signal });
   let out;
   try {
     out = await walletBalances(address, report.rows.map((r) => r.mint), { rpcUrl, signal });
@@ -89,10 +122,18 @@ export async function buildReconciledReport(address, trades, { now = () => Math.
     if (signal?.aborted) throw e; // a cancelled scan stops here — it must not quietly return an unreconciled report
     return { report, reconciled: 0, reconcileFailed: 0 }; // chain unreadable right now — the scan result stands
   }
+  // an abort that lands during the last balance call ends the loop normally
+  // with partial data — the report is unreconciled and must not resolve as
+  // success just because the throw inside the loop never fired
+  if (signal?.aborted) throw new Error("balance reconciliation aborted");
   const adjustments = diffAdjustments(report.rows, out.balances);
   if (!adjustments.length) return { report, reconciled: 0, reconcileFailed: out.failed };
 
-  const ts = typeof now === "function" ? now() : now;
+  // synthetic movements must sort AFTER every real trade: a machine clock
+  // lagging behind chain time would otherwise reorder FIFO and reprice real
+  // closings against the synthetic adjustment
+  const maxTs = trades.reduce((m, t) => Math.max(m, t.ts ?? 0), 0);
+  const ts = Math.max(typeof now === "function" ? now() : now, maxTs);
   const synthetic = adjustments.map((a) => ({
     side: a.diff < 0 ? "out" : "in", // phantom lots leave the books; unseen deposits arrive basis-less
     mint: a.mint,
@@ -102,6 +143,6 @@ export async function buildReconciledReport(address, trades, { now = () => Math.
     slot: Number.MAX_SAFE_INTEGER, // after any real trade in the same second — never rewrite computed FIFO
     signature: "chain-reconcile",
   }));
-  const rebuilt = await buildReport([...trades, ...synthetic]);
+  const rebuilt = await buildReport([...trades, ...synthetic], { signal });
   return { report: rebuilt, reconciled: adjustments.length, reconcileFailed: out.failed };
 }

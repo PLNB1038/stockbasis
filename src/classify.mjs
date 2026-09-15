@@ -16,7 +16,9 @@ const curated = (() => {
 })();
 
 const cache = new Map(); // mint -> { symbol, name, isStock, tags } | { isNull, nullUntil }
-const NULL_TTL_MS = Number(process.env.CLASSIFY_NULL_TTL_MS ?? 10 * 60 * 1000);
+// finite-or-default: a NaN TTL from a typo'd env var would make every null
+// cache entry expire instantly (or never) without any signal
+const NULL_TTL_MS = Number.isFinite(Number(process.env.CLASSIFY_NULL_TTL_MS)) ? Number(process.env.CLASSIFY_NULL_TTL_MS) : 10 * 60 * 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // token metadata is attacker-controllable: strip control characters AND
 // bidi/zero-width format characters at the source — a spoofed symbol must

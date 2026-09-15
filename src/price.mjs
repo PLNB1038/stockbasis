@@ -6,7 +6,8 @@ const MISS_TTL_MS = 5 * 60 * 1000;
 
 /**
  * SOL price at a given unix timestamp (per-day resolution, cached).
- * Falls back to the current price when history is unavailable.
+ * Returns null when no history is available — the caller then books the
+ * cash leg as an unpriced movement instead of guessing a value.
  * @param {number} ts unix seconds
  */
 export async function solUsdOn(ts) {

@@ -3,7 +3,7 @@
 //   node src/cli.mjs csv     <address>   write stockbasis-<address>.csv
 //   node src/cli.mjs scan    <address>   debug: list equity tokens the wallet touched
 
-import { ingestWallet } from "./ingest.mjs";
+import { ingestWallet, envInt } from "./ingest.mjs";
 import { buildReconciledReport } from "./reconcile.mjs";
 import { lookupToken } from "./classify.mjs";
 import { toCsv } from "./csv.mjs";
@@ -16,8 +16,8 @@ if (!cmd || !address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
 
 console.error(`[stockbasis] scanning ${address} ...`);
 const { trades, transfers, seen, coverage, classifyFailed } = await ingestWallet(address, {
-  maxScanTx: Number(process.env.INGEST_MAX_SCAN_TX ?? 1500),
-  targetStockTrades: Number(process.env.INGEST_TARGET_TRADES ?? 30),
+  maxScanTx: envInt(process.env.INGEST_MAX_SCAN_TX, 1500),
+  targetStockTrades: envInt(process.env.INGEST_TARGET_TRADES, 30),
   onProgress: (p) => { if (p.scanned % 50 === 0) console.error(`  ...${p.scanned} txs, ${p.trades} stock trades`); },
 });
 console.error(`[stockbasis] ${seen} txs → ${trades.length} trades, ${transfers.length} transfers`);

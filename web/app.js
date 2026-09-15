@@ -39,6 +39,7 @@ async function loadMarket() {
 }
 
 let pollSeq = 0; // a newer submit invalidates an in-flight poll loop
+let lastJobSeq = -1; // the pollSeq that produced lastJob/lastCloses
 
 $("scan").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -48,7 +49,7 @@ $("scan").addEventListener("submit", async (e) => {
   const seq = ++pollSeq;
   lastAddress = address;
   $("go").disabled = true;
-  show("progress"); hide("error"); hide("report");
+  show("progress"); hide("error"); hide("report"); hide("assume-opt");
 
   try {
     const res = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }) });
@@ -69,16 +70,23 @@ async function poll(id, seq) {
     let job;
     try {
       const res = await fetch(`/api/jobs/${id}`);
-      if (!res.ok) throw new Error(res.status === 404 ? "Server restarted — please run the scan again." : `HTTP ${res.status}`);
+      // HTTP-status failures are not network blips: a 404 means the job is
+      // gone (server restarted, map pressure) and must surface its own
+      // message instead of being retried into "Network error" half a minute
+      // later — only a rejected fetch counts as flaky
+      if (!res.ok) throw { hard: true, message: res.status === 404 ? "Server restarted — please run the scan again." : `HTTP ${res.status}` };
       job = await res.json();
       flaky = 0;
-    } catch {
+    } catch (err) {
+      if (err?.hard) throw new Error(err.message);
       if (++flaky > 5) throw new Error("Network error — please scan again.");
       await new Promise((r) => setTimeout(r, 2000 * flaky));
       continue;
     }
     if (job.status === "done") {
       lastJob = job;
+      lastJobSeq = seq;
+      if (seq !== pollSeq) return; // a newer submit landed while this GET was in flight
       return render(job);
     }
     if (job.status === "error") throw new Error(job.error);
@@ -167,19 +175,26 @@ function render(job) {
   show("report");
 }
 
-// the assumption toggle re-renders the last report without a rescan
+// the assumption toggle re-renders the last report without a rescan — but
+// only while that report is still the current one: mid-scan it must not
+// paint a finished report (and its CSV) over a running progress bar
 $("assume").addEventListener("change", () => {
-  if (lastJob?.result) render(lastJob);
+  if (lastJob?.result && lastJobSeq === pollSeq) render(lastJob);
 });
 
 $("csv").addEventListener("click", () => {
-  if (!lastCloses?.length) return;
-  const head = "symbol,mint,acquired_date,sold_date,qty,proceeds_usd,cost_basis_usd,gain_usd";
+  // the export belongs to the report on screen: refuse while a newer scan
+  // is running, or the file would carry one wallet's rows under another
+  // wallet's name
+  if (!lastCloses?.length || lastJobSeq !== pollSeq) return;
+  const head = "symbol,mint,acquired_date,sold_date,qty,proceeds_usd,cost_basis_usd,gain_usd,assumed_gain_usd";
   const d = (ts) => (ts ? new Date(ts * 1000).toISOString().slice(0, 10) : "unknown");
   const lines = lastCloses.map((c) =>
-    [csvSafe(c.symbol), csvSafe(c.mint), d(c.acquiredTs), d(c.soldTs), fmtQty(c.qty), c.proceedsUsd.toFixed(2), c.costUsd != null ? c.costUsd.toFixed(2) : "", c.pnlUsd != null ? c.pnlUsd.toFixed(2) : ""].join(",")
+    [csvSafe(c.symbol), csvSafe(c.mint), d(c.acquiredTs), d(c.soldTs), fmtQty(c.qty), c.proceedsUsd.toFixed(2), c.costUsd != null ? c.costUsd.toFixed(2) : "", c.pnlUsd != null ? c.pnlUsd.toFixed(2) : "", c.pnlAssumedUsd != null ? c.pnlAssumedUsd.toFixed(2) : ""].join(",")
   );
-  const blob = new Blob([head + "\n" + lines.join("\n")], { type: "text/csv" });
+  // the BOM makes Excel decode the file as UTF-8 on double-click instead of
+  // mangling every non-ASCII ticker through an ANSI code page
+  const blob = new Blob(["\uFEFF" + head + "\n" + lines.join("\n")], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `stockbasis-${(lastAddress ?? "report").slice(0, 8)}.csv`;
@@ -193,9 +208,9 @@ const compact = (n) =>
   n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(n);
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const fmt = (n) => `${n >= 0 ? "+" : "−"}${usd.format(Math.abs(n))}`;
-// sub-micro quantities are real movements: show up to 9 decimals instead of
+// sub-milli quantities are real movements: show up to 9 decimals instead of
 // rounding a booked disposal into a "0" ghost row
-const fmtQty = (q) => { const d = q !== 0 && Math.abs(q) < 1e-6 ? 9 : 6; return q.toFixed(d).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, ""); };
+const fmtQty = (q) => { const d = q !== 0 && Math.abs(q) < 1e-3 ? 9 : 6; return q.toFixed(d).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, ""); };
 const csvSafe = (s) => {
   let v = String(s);
   // pure numbers stay numeric even when negative — a leading apostrophe

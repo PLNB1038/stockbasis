@@ -6,9 +6,11 @@ import { lookupToken } from "./classify.mjs";
 /**
  * Build the full report payload from a flat list of trades.
  * @param {Array<import('./basis.mjs').Trade & {mint: string}>} trades
+ * @param {{signal?: AbortSignal}} [opts] an aborted scan stops paying for
+ *   token-metadata lookups too, exactly like the ingest path does
  * @returns {Promise<{rows: Array<object>, totalRealized: number, tokens: number, unknownBasis: number, priceCorrections: number}>}
  */
-export async function buildReport(trades) {
+export async function buildReport(trades, { signal } = {}) {
   /** @type {Map<string, Array<import('./basis.mjs').Trade>>} */
   const byMint = new Map();
   for (const t of trades) {
@@ -20,7 +22,7 @@ export async function buildReport(trades) {
   for (const mint of byMint.keys()) {
     // a classification outage must not discard a finished scan: unknown rows
     // beat no report (perStockSummary already renders a null meta as "unknown")
-    try { metas.set(mint, await lookupToken(mint)); } catch { metas.set(mint, null); }
+    try { metas.set(mint, await lookupToken(mint, { signal })); } catch { metas.set(mint, null); }
   }
 
   const rows = perStockSummary(byMint, (m) => metas.get(m));

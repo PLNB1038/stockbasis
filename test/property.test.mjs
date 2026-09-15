@@ -15,49 +15,60 @@ function mulberry32(seed) {
   };
 }
 
-/** Reference FIFO — two-queue conservative model, written independently. */
+/** Reference FIFO — two-queue conservative model, written independently.
+ * Models the statement policy: every booked line item (close cost, proceeds,
+ * pnl, unknown proceeds, assumed pnl) is a cent atom rounded at creation. */
 function referenceFifo(events) {
   const sorted = [...events].sort((a, b) => a.ts - b.ts);
   const known = [];  // [qty, cost, ts] known-basis lots, oldest-first
   const unknown = []; // [qty, ts] custody deposits, oldest-first
   let realized = 0, assumed = 0, unknownSold = 0;
+  const atom = (x) => Math.round(x * 100) / 100;
 
-  // consume `need` units from whichever inventory is older
-  function consume(need, perUnit, bookPnl) {
-    let fromKnown = 0, fromUnknown = 0;
+  // consume `need` units from whichever inventory is older; perUnit == null
+  // is a withdrawal: lots shrink at raw proportional cost, nothing is booked
+  function consume(need, perUnit, px) {
     while (need > 1e-12) {
       const k = known[0], u = unknown[0];
       const kTs = k ? k[2] : Infinity, uTs = u ? u[1] : Infinity;
       if (kTs === Infinity && uTs === Infinity) break;
       if (uTs <= kTs) {
         const take = Math.min(u[0], need);
-        u[0] -= take; fromUnknown += take; need -= take;
+        u[0] -= take; need -= take;
+        if (perUnit != null) {
+          unknownSold += take;
+          const proceeds = atom(take * perUnit);
+          if (Number.isFinite(px) && px > 0) assumed += atom(proceeds - take * px);
+        }
         if (u[0] <= 1e-12) unknown.shift();
       } else {
         const take = Math.min(k[0], need);
-        const cost = (take / k[0]) * k[1]; // proportional — computed before qty changes
-        const pnl = take * perUnit - cost;
-        if (bookPnl) { realized += pnl; assumed += pnl; }
-        k[0] -= take; k[1] -= cost; fromKnown += take; need -= take;
+        if (perUnit == null) {
+          const cost = (take / k[0]) * k[1]; // proportional — computed before qty changes
+          k[0] -= take; k[1] -= cost; need -= take;
+        } else {
+          const cost = atom((take / k[0]) * k[1]);
+          const proceeds = atom(take * perUnit);
+          const pnl = atom(proceeds - cost);
+          realized += pnl; assumed += pnl;
+          k[0] -= take; k[1] -= cost; need -= take;
+        }
         if (k[0] <= 1e-12) known.shift();
       }
     }
-    return [fromKnown, fromUnknown];
+    return need;
   }
 
   for (const e of sorted) {
     if (e.side === "buy") { known.push([e.qty, e.valueUsd, e.ts]); continue; }
     if (e.side === "in") { unknown.push([e.qty, e.ts]); continue; }
-    if (e.side === "out") { consume(e.qty, null, false); continue; }
-    // sell
-    const perUnit = e.valueUsd / e.qty;
-    const [fK, fU] = consume(e.qty, perUnit, true);
-    const phantom = e.qty - fK - fU; // shares with no tracked inventory at all
-    const unknownPart = fU + phantom;
-    if (unknownPart > 1e-12) {
-      unknownSold += unknownPart;
-      const proceeds = unknownPart * perUnit;
-      if (Number.isFinite(e.marketPx) && e.marketPx > 0) assumed += proceeds - unknownPart * e.marketPx;
+    if (e.side === "out") { consume(e.qty, null, NaN); continue; }
+    // sell: residue beyond any tracked inventory is an unknown-basis disposal
+    const residue = consume(e.qty, e.valueUsd / e.qty, e.marketPx);
+    if (residue > 1e-12) {
+      unknownSold += residue;
+      const proceeds = atom(residue * (e.valueUsd / e.qty));
+      if (Number.isFinite(e.marketPx) && e.marketPx > 0) assumed += atom(proceeds - residue * e.marketPx);
     }
   }
 

@@ -32,7 +32,11 @@ export async function ingestWallet(address, opts = {}) {
   const signal = opts.signal;
   const sigs = [];
   for await (const s of allSignatures(address, opts)) {
-    if (s.err) continue; // failed txs changed nothing
+    // failed txs changed nothing; a tx without blockTime cannot be placed on
+    // the FIFO timeline (ts=0 would sort it before every real trade and dump
+    // its sells into unknown-basis) — skipping leaves an honest coverage hole
+    // that reconciliation with live balances already compensates for
+    if (s.err || s.blockTime == null) continue;
     sigs.push(s);
     opts.onWalk?.(sigs.length);
     if (sigs.length >= (opts.maxScanTx ?? 1500)) break; // no point walking past the fetch budget
@@ -99,8 +103,17 @@ export async function ingestWallet(address, opts = {}) {
 }
 
 // chunks feed the single serialized RPC queue — this knob only sets how many
-// fetches are queued per round, it does not bypass the global pacing
-const TX_CONCURRENCY = Number(process.env.INGEST_CONCURRENCY ?? 5);
+// fetches are queued per round, it does not bypass the global pacing.
+// Environment numbers pass through a finite-or-default gate: a typo like
+// "5," or "1O00" parses to NaN (silently switching every budget check off),
+// and an empty string parses to 0 (instantly ending the scan) — both must
+// fall back to the default instead of quietly changing behavior.
+export const envInt = (v, dflt) => {
+  if (v == null || String(v).trim() === "") return dflt;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : dflt;
+};
+const TX_CONCURRENCY = envInt(process.env.INGEST_CONCURRENCY, 5);
 
 /**
  * Aggregator routes make cash-leg pairing ambiguous. Trades whose implied
@@ -226,7 +239,7 @@ export function tokenDeltas(meta, owner) {
  * Exported for fixture regression tests.
  * @returns {Promise<void>}
  */
-const MIN_SOL_LEG = Number(process.env.MIN_SOL_LEG ?? 0.01); // SOL: below this a delta is rent/fee dust, not a cash leg
+const MIN_SOL_LEG = envInt(process.env.MIN_SOL_LEG, 0.01); // SOL: below this a delta is rent/fee dust, not a cash leg
 
 export async function pairTrades(deltas, ctx, trades, transfers, stats = { classifyFailed: 0 }) {
   // net movements per mint first — dust in a second token account of the same

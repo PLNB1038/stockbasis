@@ -80,7 +80,10 @@ async function precomputeFeatured() {
         const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades);
         fresh.set(address, { ...report, reconciled, reconcileFailed, classifyFailed, coverage, ambiguous, transfersCount: tfs.length });
       } catch (e) {
-        console.error(`[stockbasis] precompute ${address.slice(0, 8)} failed: ${String(e?.message ?? e).slice(0, 80)}`);
+        // String() first: a broken featured entry (address undefined) must
+        // not turn the error handler itself into a TypeError that kills the
+        // round for every wallet after it
+        console.error(`[stockbasis] precompute ${String(address).slice(0, 8)} failed: ${String(e?.message ?? e).slice(0, 80)}`);
       }
     }
     // stale-but-good beats fresh-and-empty: only replace entries that rescanned
@@ -94,7 +97,17 @@ async function precomputeFeatured() {
 
 async function loadFeatured() {
   try {
-    featuredAddresses = (JSON.parse(await readFile(path.join(dataDir, "featured.json"), "utf8"))).map((f) => f.address);
+    const entries = JSON.parse(await readFile(path.join(dataDir, "featured.json"), "utf8"));
+    // validate up front and say WHICH entry is broken: one malformed record
+    // must skip itself, not poison the whole hourly precompute round
+    featuredAddresses = [];
+    for (const f of entries ?? []) {
+      if (typeof f?.address !== "string" || !ADDRESS_RE.test(f.address)) {
+        console.error(`[stockbasis] featured entry rejected (bad address): ${JSON.stringify(f)?.slice(0, 80)}`);
+        continue;
+      }
+      featuredAddresses.push(f.address);
+    }
     precomputeFeatured();
     setInterval(precomputeFeatured, 60 * 60 * 1000).unref();
   } catch {
@@ -177,6 +190,14 @@ const server = http.createServer(async (req, res) => {
       clearTimeout(bodyTimer);
     }
     if (aborted) return;
+    // cross-site callers never legitimately reach this API: a plain form or
+    // no-cors fetch (both send non-JSON content types) must not create scan
+    // jobs from an attacker's page — require the JSON content type and a
+    // same-origin fetch-metadata header when the browser sends one
+    const site = req.headers["sec-fetch-site"];
+    if (site && site !== "same-origin" && site !== "none") return json(res, 403, { error: "cross-site requests are not accepted" });
+    const ctype = String(req.headers["content-type"] ?? "");
+    if (!ctype.toLowerCase().startsWith("application/json")) return json(res, 415, { error: "application/json required" });
     let address;
     try { address = JSON.parse(body).address; } catch { /* handled below */ }
     if (!ADDRESS_RE.test(address ?? "")) return json(res, 400, { error: "valid Solana address required" });
@@ -188,15 +209,17 @@ const server = http.createServer(async (req, res) => {
     return json(res, 202, { id: job.id, target: TARGET_TRADES });
   }
 
+  // HEAD answers the API routes exactly like GET minus the body
+  const apiGet = req.method === "GET" || req.method === "HEAD";
   const jobMatch = url.pathname.match(/^\/api\/jobs\/([\w-]+)$/);
-  if (req.method === "GET" && jobMatch) {
+  if (apiGet && jobMatch) {
     const job = jobs.get(jobMatch[1]);
     if (!job) return json(res, 404, { error: "no such job" });
     const { id, address, status, progress, trades, phase, error, result } = job;
     return json(res, 200, { id, address, status, progress, trades, phase, target: TARGET_TRADES, error, result });
   }
 
-  if (req.method === "GET" && url.pathname === "/api/featured") {
+  if (apiGet && url.pathname === "/api/featured") {
     try {
       const featured = JSON.parse(await readFile(path.join(dataDir, "featured.json"), "utf8"));
       return json(res, 200, featured);
@@ -205,11 +228,11 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  if (req.method === "GET" && url.pathname === "/api/stats") {
+  if (apiGet && url.pathname === "/api/stats") {
     return json(res, 200, await marketStats());
   }
 
-  if (req.method === "GET" || req.method === "HEAD") {
+  if (apiGet) {
     const file = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
     const target = path.normalize(path.join(webDir, file));
     if (target !== webDir && !target.startsWith(webDir + path.sep)) return json(res, 403, { error: "forbidden" });
@@ -232,7 +255,9 @@ const server = http.createServer(async (req, res) => {
 
 function json(res, code, body) {
   res.writeHead(code, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(body));
+  // HEAD must behave like GET minus the body: a 404 on a live API route
+  // tells uptime probes the service is dead when it is not
+  res.end(res.req?.method === "HEAD" ? undefined : JSON.stringify(body));
 }
 
 // 24h volume across the tracked tokenized-equity pools, via DexScreener.
@@ -285,14 +310,20 @@ async function computeMarketStats() {
       }
       out.tokensWithPools = out.top.length;
       out.volume24hUsd = Math.round(out.volume24hUsd);
-      out.top.sort((a, b) => b.volume24hUsd - a.volume24hUsd);
+      // sort by the field actually stored above — a mistyped key makes the
+      // comparator return NaN, the sort a no-op, and the "top" list just the
+      // provider's response order with the real leader sliced off
+      out.top.sort((a, b) => b.volumeUsdUsd - a.volumeUsdUsd);
       out.top = out.top.slice(0, 5);
     }
     }
   } catch {
     // stale or empty strip beats a broken page
   }
-  statsCache = { at: Date.now(), data: out, empty: mints.length > 0 && out.tokensWithPools === 0 };
+  // any empty strip gets the short TTL: a DexScreener miss AND an empty
+  // universe file are both "degraded now, retry soon" — neither deserves the
+  // full ten-minute window
+  statsCache = { at: Date.now(), data: out, empty: out.tokensWithPools === 0 };
   return out;
 }
 

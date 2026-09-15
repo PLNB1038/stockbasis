@@ -2,8 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { toCsv } from "../src/csv.mjs";
 
-/** Minimal strict RFC-4180 parser: quotes, escaped quotes, CRLF/LF. */
+/** Minimal strict RFC-4180 parser: quotes, escaped quotes, CRLF/LF, UTF-8 BOM. */
 function parseCsv(text) {
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // Excel-style BOM
   const rows = [];
   let row = [];
   let field = "";
@@ -35,12 +36,14 @@ test("csv output parses strictly and preserves fields", () => {
   ]);
   const rows = parseCsv(csv);
   assert.equal(rows.length, 3);
-  assert.deepEqual(rows[0], ["symbol", "mint", "acquired_date", "sold_date", "qty", "proceeds_usd", "cost_basis_usd", "gain_usd"]);
+  assert.deepEqual(rows[0], ["symbol", "mint", "acquired_date", "sold_date", "qty", "proceeds_usd", "cost_basis_usd", "gain_usd", "assumed_gain_usd"]);
+  assert.equal(csv.charCodeAt(0), 0xfeff, "the export must start with a UTF-8 BOM so Excel decodes non-ASCII tickers correctly");
   assert.equal(rows[1][0], "NVDAx");
   assert.equal(rows[1][2], "2023-11-14"); // 1700000000
   assert.equal(rows[1][3], "2023-11-16"); // 1700100000
   assert.equal(rows[1][4], "1.5");
   assert.equal(rows[1][7], "50.46");
+  assert.equal(rows[1][8], "", "no assumed value when the quote is absent");
   assert.equal(rows[2][2], "unknown"); // no acquisition date
 });
 
@@ -88,6 +91,6 @@ test("carriage return inside a symbol stays one field", () => {
   ]);
   const rows = parseCsv(csv);
   assert.equal(rows.length, 2); // header + ONE record — \r must not split it
-  assert.equal(rows[1].length, 8);
+  assert.equal(rows[1].length, 9);
   assert.equal(rows[1][0], "X\rY");
 });

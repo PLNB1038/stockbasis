@@ -53,6 +53,9 @@ export function fifoBasis(trades) {
   // a disposal consumes whichever inventory is older — known lots or earlier
   // custody deposits. Deposits-first is the conservative reading: when the
   // chain cannot say which shares were sold, profit is not invented.
+  // Line items are rounded to cents AT CREATION and the totals sum those
+  // atoms: a statement whose rows, CSV cells and grand total each round
+  // independently cannot be reconciled against itself by an accountant.
   const consumeOldest = (need, perUnit, t) => {
     while (need >= 1e-12) {
       const lot = lots[0];
@@ -62,22 +65,22 @@ export function fifoBasis(trades) {
       if (lotTs === Infinity && unkTs === Infinity) break;
       if (unkTs <= lotTs) {
         const take = Math.min(unk.qty, need);
-        const proceeds = take * perUnit;
-        unknownBasis.push({ soldTs: t.ts, qty: take, proceedsUsd: proceeds });
+        const proceeds = cents(take * perUnit);
+        unknownBasis.push({ soldTs: t.ts, qty: take, proceedsUsd: proceeds, pnlAssumedUsd: assumable(t) ? cents(proceeds - take * t.marketPx) : null });
         if (assumable(t)) {
-          realizedAssumed += proceeds - take * t.marketPx;
+          realizedAssumed += cents(proceeds - take * t.marketPx);
         }
         unk.qty -= take;
         need -= take;
         if (unk.qty <= 1e-12) unknownQ.shift();
       } else {
         const take = Math.min(lot.qty, need);
-        const cost = (take / lot.qty) * lot.costUsd;
-        const proceeds = take * perUnit;
+        const cost = cents((take / lot.qty) * lot.costUsd);
+        const proceeds = cents(take * perUnit);
         realizedUsd += proceeds - cost;
         realizedAssumed += proceeds - cost; // assumed variant includes all known-basis P&L
         realizedBuyUsd += cost;
-        closes.push({ acquiredTs: lot.ts, soldTs: t.ts, qty: take, costUsd: cost, proceedsUsd: proceeds, pnlUsd: proceeds - cost });
+        closes.push({ acquiredTs: lot.ts, soldTs: t.ts, qty: take, costUsd: cost, proceedsUsd: proceeds, pnlUsd: cents(proceeds - cost) });
         lot.qty -= take;
         lot.costUsd -= cost;
         need -= take;
@@ -89,6 +92,9 @@ export function fifoBasis(trades) {
 
   for (const t of sorted) {
     if (t.side === "buy") {
+      // degenerate input never books a poison lot: a NaN/<=0 quantity or
+      // non-finite value would corrupt every later close silently
+      if (!(t.qty > 0) || !Number.isFinite(t.valueUsd)) continue;
       lots.push({ qty: t.qty, costUsd: t.valueUsd, ts: t.ts });
       continue;
     }
@@ -120,6 +126,8 @@ export function fifoBasis(trades) {
       continue;
     }
     if (t.side === "in") {
+      // same rule as buys: a negative or NaN deposit corrupts the queue
+      if (!(t.qty > 0)) continue;
       unknownQ.push({ qty: t.qty, ts: t.ts });
       continue;
     }
@@ -131,10 +139,10 @@ export function fifoBasis(trades) {
     if (!(t.qty > 0) || !Number.isFinite(t.valueUsd)) continue; // degenerate, never book NaN
     const need = consumeOldest(t.qty, t.valueUsd / t.qty, t);
     if (need >= 1e-12) {
-      const proceeds = need * (t.valueUsd / t.qty);
-      unknownBasis.push({ soldTs: t.ts, qty: need, proceedsUsd: proceeds });
+      const proceeds = cents(need * (t.valueUsd / t.qty));
+      unknownBasis.push({ soldTs: t.ts, qty: need, proceedsUsd: proceeds, pnlAssumedUsd: assumable(t) ? cents(proceeds - need * t.marketPx) : null });
       if (assumable(t)) {
-        realizedAssumed += proceeds - need * t.marketPx;
+        realizedAssumed += cents(proceeds - need * t.marketPx);
       }
     }
   }
@@ -173,8 +181,10 @@ export function perStockSummary(tradesByMint, meta) {
       realizedAssumed: round(b.realizedAssumed, 2),
       closes: b.closes,
       realizedUsd: round(b.realizedUsd, 2),
-      openQty: round(b.openQty, 6),
-      openUnknownQty: round(b.openUnknownQty, 6),
+      // 12 decimals survive the round trip: a single unit of a 9-decimals mint
+      // is a real position, and the renderer already formats for display
+      openQty: round(b.openQty, 12),
+      openUnknownQty: round(b.openUnknownQty, 12),
       openCostUsd: round(b.openCostUsd, 2),
       firstTs: trades.length ? Math.min(...trades.map((t) => t.ts)) : undefined,
       lastTs: trades.length ? Math.max(...trades.map((t) => t.ts)) : undefined,
@@ -184,3 +194,4 @@ export function perStockSummary(tradesByMint, meta) {
 }
 
 const round = (x, d) => Math.round(x * 10 ** d) / 10 ** d;
+const cents = (x) => Math.round(x * 100) / 100;

@@ -3,6 +3,7 @@
 //   throttle — the first DexScreener call answers 429, every later one healthy
 //   proto    — a pair whose baseToken.address is "__proto__" plus a healthy one
 //   nan      — a healthy pair plus one with a non-numeric volume field
+//   sort     — six pairs, the highest-volume one LAST in the response
 // Never run directly.
 import { readFileSync } from "node:fs";
 
@@ -26,7 +27,12 @@ globalThis.fetch = (url, opts) => {
             { baseToken: { address: mints[0] }, priceUsd: 2.5, liquidity: { usd: 9000 }, volume: { h24: 12345 } },
             { baseToken: { address: mints[1] }, priceUsd: 3, liquidity: { usd: 8000 }, volume: { h24: "lots" } },
           ]
-        : [{ baseToken: { address: mints[0] }, priceUsd: 2.5, liquidity: { usd: 9000 }, volume: { h24: 12345 } }];
+        : mode === "sort"
+          ? [
+              ...mints.slice(0, 5).map((m, i) => ({ baseToken: { address: m }, priceUsd: 2, liquidity: { usd: 9000 - i }, volume: { h24: 1000 + i } })),
+              { baseToken: { address: mints[5] }, priceUsd: 2, liquidity: { usd: 1 }, volume: { h24: 9_000_000 } },
+            ]
+          : [{ baseToken: { address: mints[0] }, priceUsd: 2.5, liquidity: { usd: 9000 }, volume: { h24: 12345 } }];
     return Promise.resolve({ ok: true, json: async () => pairs });
   }
   return realFetch(url, opts);

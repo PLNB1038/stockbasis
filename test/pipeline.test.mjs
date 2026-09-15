@@ -84,7 +84,7 @@ test("ingest: history is fetched newest-first and handed over oldest-first", asy
   });
   try {
     const { trades, coverage, seen } = await ingestWallet(OWNER, { rpcUrl: fake.url });
-    assert.equal(seen, 5);                                  // the failed tx is skipped
+    assert.equal(seen, 4);                                  // failed AND undated txs are skipped
     assert.deepEqual(trades.map((x) => x.side), ["buy", "buy", "sell"]); // oldest first
     assert.deepEqual(trades.map((x) => x.qty), [1.0, 0.5, 0.8]);
     assert.equal(coverage.fromTs, t - 5 * HOUR);             // oldest scanned signature
