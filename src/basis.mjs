@@ -1,5 +1,10 @@
 // FIFO cost basis.
 
+// signature of the synthetic movements reconcile injects: they timestamp at
+// scan time (after every real trade, by design) and must stay out of the
+// activity window and any real-trade statistic
+export const RECONCILE_SYNTHETIC = "chain-reconcile";
+
 /**
  * @typedef {Object} Trade
  * @property {"buy"|"sell"|"out"|"in"} side   // out/in = withdrawals/deposits without cash leg
@@ -133,9 +138,8 @@ export function fifoBasis(trades) {
     }
 
     // sell: consume inventory oldest-first (known lots book closes, custody
-    // deposits book unknown-basis disposals). Dust below 1e-12 units is three
-    // orders below the smallest real movement: SPL mints go up to 9 decimals,
-    // so a single unit (1e-9) must survive the filter.
+    // deposits book unknown-basis disposals). The epsilon is inclusive: the
+    // smallest unit of a 12-decimals mint is exactly 1e-12 and must survive.
     if (!(t.qty > 0) || !Number.isFinite(t.valueUsd)) continue; // degenerate, never book NaN
     const need = consumeOldest(t.qty, t.valueUsd / t.qty, t);
     if (need >= 1e-12) {
@@ -164,6 +168,10 @@ export function perStockSummary(tradesByMint, meta) {
   for (const [mint, trades] of tradesByMint) {
     const b = fifoBasis(trades);
     const m = meta(mint) ?? { symbol: mint.slice(0, 6), name: "unknown" };
+    // the activity window covers REAL trades only: a reconcile adjustment
+    // lands at scan time ("after every trade" by design) and would stretch
+    // the window months past the last actual swap
+    const realTs = trades.filter((t) => t.signature !== RECONCILE_SYNTHETIC).map((t) => t.ts);
     // break-even (pnl exactly 0) is neither a win nor a loss
     const wins = b.closes.filter((c) => c.pnlUsd > 0).length;
     const losses = b.closes.filter((c) => c.pnlUsd < 0).length;
@@ -186,8 +194,8 @@ export function perStockSummary(tradesByMint, meta) {
       openQty: round(b.openQty, 12),
       openUnknownQty: round(b.openUnknownQty, 12),
       openCostUsd: round(b.openCostUsd, 2),
-      firstTs: trades.length ? Math.min(...trades.map((t) => t.ts)) : undefined,
-      lastTs: trades.length ? Math.max(...trades.map((t) => t.ts)) : undefined,
+      firstTs: realTs.length ? Math.min(...realTs) : undefined,
+      lastTs: realTs.length ? Math.max(...realTs) : undefined,
     });
   }
   return rows.sort((a, b) => Math.abs(b.realizedUsd) - Math.abs(a.realizedUsd));

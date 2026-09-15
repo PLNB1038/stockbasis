@@ -6,20 +6,24 @@ import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { ingestWallet } from "./ingest.mjs";
+import { ingestWallet, envInt } from "./ingest.mjs";
 import { buildReconciledReport } from "./reconcile.mjs";
 import { rpcEndpoints } from "./rpc.mjs";
 
 const webDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "web");
 const dataDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
-const PORT = Number(process.env.PORT ?? 8787);
-const MAX_SCAN_TX = Number(process.env.INGEST_MAX_SCAN_TX ?? 1500);
-const TARGET_TRADES = Number(process.env.INGEST_TARGET_TRADES ?? 30);
+// every env number goes through envInt: an empty string or a typo ("5x", "1O00")
+// parses to 0/NaN via bare Number(), silently switching budgets and caps off —
+// a zeroed scan budget turns every interactive report into an instant empty
+// "done", a NaN jobs cap lets the map grow without bound
+const PORT = envInt(process.env.PORT, 8787);
+const MAX_SCAN_TX = envInt(process.env.INGEST_MAX_SCAN_TX, 1500);
+const TARGET_TRADES = envInt(process.env.INGEST_TARGET_TRADES, 30);
 const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 /** @type {Map<string, object>} */
 const jobs = new Map();
-const MAX_JOBS = Number(process.env.MAX_JOBS ?? 500);
+const MAX_JOBS = envInt(process.env.MAX_JOBS, 500);
 
 // finished-job retention is time-based, so a fast loop of cheap job creations
 // (a cached featured address answers instantly) could grow the map for the
@@ -27,7 +31,7 @@ const MAX_JOBS = Number(process.env.MAX_JOBS ?? 500);
 // but only after a grace window: a report must outlive its scan, so filling
 // the map with fresh jobs cannot steal a just-finished result from its
 // poller. When nothing is evictable the POST handler answers 503.
-const JOB_EVICTION_GRACE_MS = Number(process.env.JOB_EVICTION_GRACE_MS ?? 60_000);
+const JOB_EVICTION_GRACE_MS = envInt(process.env.JOB_EVICTION_GRACE_MS, 60_000);
 function evictFinishedJobs() {
   for (const [id, j] of jobs) {
     if (jobs.size < MAX_JOBS) break;
@@ -77,7 +81,11 @@ async function precomputeFeatured() {
           maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900,
         });
         if (!trades.length) continue; // dead wallet: keep the previous good snapshot instead of an empty report
-        const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades);
+        // the balance calls of the reconciliation ride the same unmetered
+        // mirror as the scan itself — leaving rpcUrl unset would drop every
+        // featured wallet's getTokenAccountsByOwner onto the interactive
+        // endpoint the comment above just promised to spare
+        const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades, { rpcUrl: process.env.PRECOMPUTE_RPC });
         fresh.set(address, { ...report, reconciled, reconcileFailed, classifyFailed, coverage, ambiguous, transfersCount: tfs.length });
       } catch (e) {
         // String() first: a broken featured entry (address undefined) must
@@ -222,7 +230,11 @@ const server = http.createServer(async (req, res) => {
   if (apiGet && url.pathname === "/api/featured") {
     try {
       const featured = JSON.parse(await readFile(path.join(dataDir, "featured.json"), "utf8"));
-      return json(res, 200, featured);
+      // the client renders whatever lands here, so gate it exactly like the
+      // precompute leg (loadFeatured): a malformed record must not TypeError
+      // the featured strip on every visitor's page load
+      const clean = (Array.isArray(featured) ? featured : []).filter((f) => typeof f?.address === "string" && ADDRESS_RE.test(f.address));
+      return json(res, 200, clean);
     } catch {
       return json(res, 200, []);
     }
@@ -267,7 +279,7 @@ let statsInflight = null;
 const STATS_TTL_MS = 10 * 60 * 1000;
 // an empty strip is worth little time: a throttled burst must not freeze the
 // volume line for the whole 10-minute window
-const STATS_EMPTY_TTL_MS = Number(process.env.STATS_EMPTY_TTL_MS ?? 60 * 1000);
+const STATS_EMPTY_TTL_MS = envInt(process.env.STATS_EMPTY_TTL_MS, 60 * 1000);
 
 async function marketStats() {
   if (statsCache && Date.now() - statsCache.at < (statsCache.empty ? STATS_EMPTY_TTL_MS : STATS_TTL_MS)) return statsCache.data;

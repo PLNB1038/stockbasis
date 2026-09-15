@@ -7,6 +7,7 @@
 
 import { rpc, rpcEndpoints } from "./rpc.mjs";
 import { buildReport } from "./report.mjs";
+import { RECONCILE_SYNTHETIC } from "./basis.mjs";
 
 /**
  * Pure diff: report rows vs a mint->uiAmount balance map.
@@ -141,7 +142,7 @@ export async function buildReconciledReport(address, trades, { now = () => Math.
     valueUsd: 0,
     ts,
     slot: Number.MAX_SAFE_INTEGER, // after any real trade in the same second — never rewrite computed FIFO
-    signature: "chain-reconcile",
+    signature: RECONCILE_SYNTHETIC,
   }));
   const rebuilt = await buildReport([...trades, ...synthetic], { signal });
   return { report: rebuilt, reconciled: adjustments.length, reconcileFailed: out.failed };

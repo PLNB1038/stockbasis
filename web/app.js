@@ -15,7 +15,7 @@ async function loadFeatured() {
     if (!list.length) return;
     $("featured").hidden = false;
     $("featured-list").innerHTML = list.map((f) =>
-      `<button class="featured" data-addr="${esc(f.address)}"><b>${esc(f.label)}</b><span>${f.address.slice(0, 4)}…${f.address.slice(-4)}</span></button>`
+      `<button class="featured" data-addr="${esc(f.address)}"><b>${esc(f.label)}</b><span>${esc(f.address.slice(0, 4))}…${esc(f.address.slice(-4))}</span></button>`
     ).join("");
     for (const btn of document.querySelectorAll(".featured")) {
       btn.addEventListener("click", () => {
@@ -40,6 +40,10 @@ async function loadMarket() {
 
 let pollSeq = 0; // a newer submit invalidates an in-flight poll loop
 let lastJobSeq = -1; // the pollSeq that produced lastJob/lastCloses
+// a request that never settles (captive WiFi, roaming between access points)
+// must read as a network failure, not freeze the progress bar forever — the
+// override exists so tests can watch a hang resolve in milliseconds
+const REQ_TIMEOUT_MS = globalThis.STOCKBASIS_REQ_TIMEOUT_MS ?? 10_000;
 
 $("scan").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -52,7 +56,7 @@ $("scan").addEventListener("submit", async (e) => {
   show("progress"); hide("error"); hide("report"); hide("assume-opt");
 
   try {
-    const res = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }) });
+    const res = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }), signal: AbortSignal.timeout(REQ_TIMEOUT_MS) });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
     await poll(body.id, seq);
@@ -69,13 +73,22 @@ async function poll(id, seq) {
     if (seq !== pollSeq) return; // superseded by a newer scan
     let job;
     try {
-      const res = await fetch(`/api/jobs/${id}`);
+      const res = await fetch(`/api/jobs/${id}`, { signal: AbortSignal.timeout(REQ_TIMEOUT_MS) });
       // HTTP-status failures are not network blips: a 404 means the job is
       // gone (server restarted, map pressure) and must surface its own
       // message instead of being retried into "Network error" half a minute
       // later — only a rejected fetch counts as flaky
       if (!res.ok) throw { hard: true, message: res.status === 404 ? "Server restarted — please run the scan again." : `HTTP ${res.status}` };
       job = await res.json();
+      // a 200-OK body that is not a job record (a gateway or captive-portal
+      // page that still parses as JSON) is a network blip, not progress:
+      // swallowing it as "still running" would poll forever over
+      // "Scanned undefined" progress and a NaN bar
+      if (typeof job?.status !== "string") {
+        if (++flaky > 5) throw { hard: true, message: "Unexpected server response — please scan again." };
+        await new Promise((r) => setTimeout(r, 2000 * flaky));
+        continue;
+      }
       flaky = 0;
     } catch (err) {
       if (err?.hard) throw new Error(err.message);

@@ -137,6 +137,22 @@ async function rpcInner(method, params, opts = {}) {
       await sleep(2 ** Math.min(attempt, 4) * 750);
       continue;
     }
+    // result:null is the official "not found" answer (an evicted transaction
+    // answers exactly this on mainnet): one mirror's null is a per-endpoint
+    // data hole, not a chain fact — rotate exactly like -32020 before
+    // returning it to the caller
+    if (body.result === null) {
+      holes.add(url);
+      if (holes.size < urls.length && holeSkips++ < urls.length * 3) {
+        endpointIdx++;
+        continue;
+      }
+      if (holes.size < urls.length) {
+        throw new Error(`RPC ${method}: null-result rotation exhausted before every mirror answered (${holes.size}/${urls.length} asked)`);
+      }
+      opts.onEndpoint?.(url); // every mirror said null — the caller sees the honest null
+      return body.result;
+    }
     opts.onEndpoint?.(url); // the mirror this answer came from
     return body.result;
   }
@@ -163,11 +179,17 @@ export async function* allSignatures(address, opts = {}) {
     }
     if (!batch?.length) return;
 
-    // batches come newest-first; walk to the oldest of this batch, then continue
-    before = batch[batch.length - 1].signature;
+    // batches come newest-first; walk to the oldest of this batch, then
+    // continue. A short page is NOT the end: the JSON-RPC contract is "at
+    // most limit", so a provider capping pages well below 1000 with plenty
+    // of history left must not silently truncate the walk — only an empty
+    // page ends it. A cursor that refuses to advance (a mirror repeating
+    // one page for any before) must not loop forever or re-yield it either.
+    const next = batch[batch.length - 1].signature;
+    if (next === before) return;
     for (const s of batch) {
       yield { signature: s.signature, slot: s.slot, blockTime: s.blockTime, err: s.err };
     }
-    if (batch.length < 1000) return;
+    before = next;
   }
 }

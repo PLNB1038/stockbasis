@@ -133,7 +133,9 @@ test("multi-leg bundle books movements, not vanishing shares", async () => {
   );
   assert.equal(trades.filter((t) => t.side === "sell" || t.side === "buy").length, 0); // no invented P&L
   assert.equal(trades.filter((t) => t.side === "out").length, 2); // both legs leave the inventory
-  assert.equal(transfers.length, 2);
+  // round8: the bundle's cash side is ledgered too — the dollars did move
+  assert.equal(transfers.length, 3);
+  assert.ok(transfers.some((t) => t.mint === USDC && t.delta === 500));
 });
 
 test("multi-leg out consumes lots — no phantom open position", async () => {
@@ -146,7 +148,9 @@ test("multi-leg out consumes lots — no phantom open position", async () => {
   assert.equal(b.openQty, 0);      // the shares left the wallet — nothing may stay open
   assert.equal(b.realizedUsd, 0);  // and no P&L was invented for the bundle
   assert.equal(b.closes.length, 0);
-  assert.equal(transfers.length, 2);
+  // round8: 2 equity movements plus the bundle's USDC cash side
+  assert.equal(transfers.length, 3);
+  assert.ok(transfers.some((t) => t.mint === USDC && t.delta === 310));
 });
 
 test("unpriced WSOL leg books a movement, not a phantom lot", async () => {
@@ -156,7 +160,9 @@ test("unpriced WSOL leg books a movement, not a phantom lot", async () => {
   await pairTrades([{ mint: TSLAX, delta: -2 }, { mint: WSOL, delta: 100 }], { ts: 1700000002, signature: "s5", solDelta: 0 }, trades, transfers);
   assert.equal(trades.filter((t) => t.side === "sell").length, 0);
   assert.equal(trades.find((t) => t.side === "out")?.qty, 2); // shares left — consume the lots
-  assert.equal(transfers.length, 1);
+  // round8: the unpriced WSOL leg stays visible in the ledger
+  assert.equal(transfers.length, 2);
+  assert.ok(transfers.some((t) => t.mint === WSOL && t.delta === 100));
 });
 
 test("sanity gate: old out-of-band trade becomes a movement, never a disappearance", () => {

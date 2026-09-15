@@ -197,6 +197,12 @@ async function fetchTx(s, opts = {}) {
   }
 }
 
+// The dust epsilon is INCLUSIVE and shared by every layer that filters on it
+// (tokenDeltas, the pairing net, the basis queues): mint decimals is a u8, so
+// mints finer than 9 decimals exist — a 12-decimals mint's smallest unit is
+// exactly 1e-12 and must survive every filter as a real movement.
+export const DUST_EPS = 1e-12;
+
 /** Net token balance changes for the wallet in one transaction. */
 export function tokenDeltas(meta, owner) {
   const pre = new Map(meta.preTokenBalances?.map((b) => [key(b), b]) ?? []);
@@ -205,17 +211,27 @@ export function tokenDeltas(meta, owner) {
 
   for (const [k, pb] of post) {
     const before = pre.get(k);
-    const was = num(before?.uiTokenAmount) ?? 0;
+    const ownerChanged = before != null && before.owner !== pb.owner;
+    // an authority flip moves the WHOLE account between owners: diffing the
+    // flip-in against the previous owner's balance would understate the
+    // deposit, and the flip-out would vanish entirely (the account key still
+    // exists post-tx, so neither loop below would see it)
+    const was = pb.owner === owner && !ownerChanged ? num(before?.uiTokenAmount) ?? 0 : 0;
     const now = num(pb.uiTokenAmount) ?? 0;
-    if (Math.abs(now - was) > 1e-12 && pb.owner === owner) {
-      out.push({ mint: pb.mint, delta: now - was });
+    if (pb.owner === owner) {
+      if (Math.abs(now - was) >= DUST_EPS) out.push({ mint: pb.mint, delta: now - was });
+    } else if (before?.owner === owner) {
+      // the account left our ownership mid-tx: the full prior balance is a
+      // disposal, whatever the (possibly unchanged) post balance says
+      const wasOurs = num(before.uiTokenAmount) ?? 0;
+      if (Math.abs(wasOurs) >= DUST_EPS) out.push({ mint: before.mint, delta: -wasOurs });
     }
   }
   // balances that existed before but vanished (account closed in this tx)
   for (const [k, pb] of pre) {
     if (post.some(([pk]) => pk === k)) continue;
     const was = num(pb.uiTokenAmount) ?? 0;
-    if (Math.abs(was) > 1e-12 && pb.owner === owner) out.push({ mint: pb.mint, delta: -was });
+    if (Math.abs(was) >= DUST_EPS && pb.owner === owner) out.push({ mint: pb.mint, delta: -was });
   }
   return out;
 
@@ -244,12 +260,12 @@ const MIN_SOL_LEG = envInt(process.env.MIN_SOL_LEG, 0.01); // SOL: below this a 
 export async function pairTrades(deltas, ctx, trades, transfers, stats = { classifyFailed: 0 }) {
   // net movements per mint first — dust in a second token account of the same
   // mint must not become a second "trade"; fully-cancelled mints drop out.
-  // 1e-12 is three orders below the smallest real movement: SPL mints go up
-  // to 9 decimals, so a single unit is 1e-9 and must NOT be filtered here.
+  // The epsilon is the shared inclusive DUST_EPS: the smallest unit of a
+  // 12-decimals mint (exactly 1e-12) is a real movement, not dust.
   const net = new Map();
   for (const d of deltas) {
     const v = (net.get(d.mint) ?? 0) + d.delta;
-    if (Math.abs(v) > 1e-12) net.set(d.mint, v);
+    if (Math.abs(v) >= DUST_EPS) net.set(d.mint, v);
     else net.delete(d.mint);
   }
 
@@ -264,12 +280,28 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
     }
   }
 
-  const cash = [...net.entries()]
+  let cash = [...net.entries()]
     .filter(([mint]) => STABLES.has(mint) || mint === WSOL)
     .map(([mint, delta]) => ({ mint, delta }));
-  const equity = [...net.entries()]
+  let equity = [...net.entries()]
     .filter(([mint]) => metas.get(mint)?.isStock)
     .map(([mint, delta]) => ({ mint, delta }));
+
+  // a route that sweeps dust of a second stock past the real trade must not
+  // demote the whole swap to an unattributable bundle: immaterial equity legs
+  // (nano dust, or a rounding-error share of the main leg) become disclosed
+  // movements while the material leg keeps its cash pairing and its P&L
+  if (equity.length > 1) {
+    const prim = equity.reduce((a, b) => (Math.abs(b.delta) > Math.abs(a.delta) ? b : a));
+    const dust = equity.filter((e) => e !== prim && (Math.abs(e.delta) < 1e-6 || Math.abs(e.delta) < 0.01 * Math.abs(prim.delta)));
+    if (dust.length === equity.length - 1) {
+      for (const d of dust) {
+        transfers.push({ mint: d.mint, delta: d.delta, ...ctx });
+        trades.push({ side: d.delta < 0 ? "out" : "in", mint: d.mint, qty: Math.abs(d.delta), valueUsd: 0, ts: ctx.ts, slot: ctx.slot, signature: ctx.signature, aggregated: true });
+      }
+      equity = [prim];
+    }
+  }
 
   // a multi-stock bundle cannot be decomposed from deltas alone — no greedy
   // guessing which cash leg paid for which share. Record the movements without
@@ -282,6 +314,9 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
       transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
       trades.push({ side: e.delta < 0 ? "out" : "in", mint: e.mint, qty: Math.abs(e.delta), valueUsd: 0, ts: ctx.ts, slot: ctx.slot, signature: ctx.signature, aggregated: true });
     }
+    // the cash side of the bundle is real money movement too: dropping it
+    // would leave the ledger blind to where the dollars went
+    for (const c of cash) transfers.push({ mint: c.mint, delta: c.delta, ...ctx });
     return;
   }
 
@@ -342,10 +377,23 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
         else valueUsd += Math.abs(c.delta) * solPrice;
       } else valueUsd += Math.abs(c.delta);
     }
+    // routes can split proceeds between a stable tail and native SOL: a
+    // temporary WSOL account unwrapped inside the tx never shows up in the
+    // token balances, only in solDelta — that native side is cash of the SAME
+    // trade, priced on top of the stable legs, never dropped
+    const sol = ctx.solDelta ?? 0;
+    if (sol !== 0 && Math.sign(sol) !== Math.sign(e.delta) && Math.abs(sol) >= MIN_SOL_LEG * 1e9) {
+      const price = await ensureSolPrice();
+      if (!Number.isFinite(price)) priced = false;
+      else valueUsd += (Math.abs(sol) / 1e9) * price;
+    }
     if (!priced) {
       // no price source for the WSOL leg: a movement without a value, never a
       // guess — and never a disappearance: the shares still left/arrived
-      for (const c of legs) cash.splice(cash.indexOf(c), 1);
+      for (const c of legs) {
+        cash.splice(cash.indexOf(c), 1);
+        transfers.push({ mint: c.mint, delta: c.delta, ...ctx });
+      }
       transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
       trades.push({ side: e.delta < 0 ? "out" : "in", mint: e.mint, qty: Math.abs(e.delta), valueUsd: 0, ts: ctx.ts, slot: ctx.slot, signature: ctx.signature });
       continue;
