@@ -40,6 +40,7 @@ async function walletBalances(address, mints, opts = {}) {
   const balances = new Map();
   let failed = 0;
   for (const mint of mints) {
+    if (opts.signal?.aborted) throw new Error("balance reconciliation aborted"); // a cancelled scan stops paying for RPC
     // strict 3-param form: some providers reject a filter object that
     // mixes a filter key with config keys like encoding
     // a failed balance read must SKIP the mint: recording a zero would wipe
@@ -79,12 +80,13 @@ async function walletBalances(address, mints, opts = {}) {
  * Build the report, then true up open positions against the chain and rebuild.
  * @returns {Promise<{report: object, reconciled: number}>}
  */
-export async function buildReconciledReport(address, trades, { now = () => Math.floor(Date.now() / 1000), rpcUrl } = {}) {
+export async function buildReconciledReport(address, trades, { now = () => Math.floor(Date.now() / 1000), rpcUrl, signal } = {}) {
   const report = await buildReport(trades);
   let out;
   try {
-    out = await walletBalances(address, report.rows.map((r) => r.mint), { rpcUrl });
-  } catch {
+    out = await walletBalances(address, report.rows.map((r) => r.mint), { rpcUrl, signal });
+  } catch (e) {
+    if (signal?.aborted) throw e; // a cancelled scan stops here — it must not quietly return an unreconciled report
     return { report, reconciled: 0, reconcileFailed: 0 }; // chain unreadable right now — the scan result stands
   }
   const adjustments = diffAdjustments(report.rows, out.balances);

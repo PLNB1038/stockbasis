@@ -6,6 +6,12 @@ const MAX_RETRIES = Number(process.env.RPC_MAX_RETRIES ?? 6);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// JSON-RPC request-class errors are the caller's own fault — a wrong-size
+// pubkey or a malformed filter answers -32602 on every mirror forever.
+// Retrying them just burns pacing slots and backoff sleeps while holding the
+// caller's slot.
+const PERMANENT_RPC_CODES = new Set([-32600, -32601, -32602, -32700]);
+
 /** RPC-level error with the JSON-RPC code attached, so callers can react to specific codes. */
 export class RpcError extends Error {
   constructor(method, body) {
@@ -19,9 +25,11 @@ const lastCallByUrl = new Map(); // endpoint URL -> ms of its last call start: p
 let endpointIdx = 0;
 
 function endpoints(opts) {
-  // comma-separated list → on repeated 429/5xx we rotate to the next mirror
+  // comma-separated list → on repeated 429/5xx we rotate to the next mirror.
+  // Duplicates are removed: with the same URL listed twice, one "not found"
+  // answer can never fill two holes and the rotation below would spin forever
   const raw = opts.rpcUrl ?? process.env.SOLANA_RPC ?? DEFAULT_RPC;
-  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return [...new Set(raw.split(",").map((s) => s.trim()).filter(Boolean))];
 }
 
 /**
@@ -93,12 +101,16 @@ async function rpcInner(method, params, opts = {}) {
       // the primary usually still serves what a shallow mirror has dropped
       if (body.error.code === -32020) {
         holes.add(urls[endpointIdx % urls.length]);
-        if (holes.size < urls.length) {
+        // the attempt cap covers this branch too: a concurrent caller moving
+        // the shared rotation index must not keep us circling holed mirrors
+        if (holes.size < urls.length && attempt < MAX_RETRIES) {
           endpointIdx++;
           continue;
         }
         throw new RpcError(method, body.error);
       }
+      // request-class errors are permanent — fail now, not after six retries
+      if (PERMANENT_RPC_CODES.has(body.error.code)) throw new RpcError(method, body.error);
       // other RPC-level errors can be transient (node behind a load balancer)
       if (attempt >= MAX_RETRIES) throw new RpcError(method, body.error);
       endpointIdx++;

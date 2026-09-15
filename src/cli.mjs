@@ -33,12 +33,12 @@ if (cmd === "scan") {
 }
 
 const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades);
-const { rows, closes, totalRealized, aggregatedDisposals } = report;
+const { rows, disposals, unknownCloses, totalRealized, aggregatedDisposals } = report;
 
 if (cmd === "csv") {
   const file = `stockbasis-${address.slice(0, 8)}.csv`;
-  await import("node:fs").then((fs) => fs.writeFileSync(file, toCsv(closes)));
-  console.error(`[stockbasis] wrote ${file} (${closes.length} disposals)`);
+  await import("node:fs").then((fs) => fs.writeFileSync(file, toCsv(disposals)));
+  console.error(`[stockbasis] wrote ${file} (${disposals.length} disposals${unknownCloses?.length ? `, ${unknownCloses.length} with unknown basis` : ""})`);
 } else {
   console.table(rows.map(({ mint, ...r }) => ({ symbol: r.symbol, trades: r.trades, realizedUsd: r.realizedUsd, openQty: r.openQty, openCostUsd: r.openCostUsd })));
   console.log(`TOTAL realized P&L: ${totalRealized.toFixed(2)} USD across ${rows.length} stock tokens`);

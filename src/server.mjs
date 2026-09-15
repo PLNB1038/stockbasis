@@ -19,6 +19,21 @@ const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 /** @type {Map<string, object>} */
 const jobs = new Map();
+const MAX_JOBS = Number(process.env.MAX_JOBS ?? 500);
+
+// finished-job retention is time-based, so a fast loop of cheap job creations
+// (a cached featured address answers instantly) could grow the map for the
+// whole 10-minute window. Under pressure the oldest finished jobs go first —
+// but only after a grace window: a report must outlive its scan, so filling
+// the map with fresh jobs cannot steal a just-finished result from its
+// poller. When nothing is evictable the POST handler answers 503.
+const JOB_EVICTION_GRACE_MS = Number(process.env.JOB_EVICTION_GRACE_MS ?? 60_000);
+function evictFinishedJobs() {
+  for (const [id, j] of jobs) {
+    if (jobs.size < MAX_JOBS) break;
+    if ((j.status === "done" || j.status === "error") && j.finished && Date.now() - j.finished > JOB_EVICTION_GRACE_MS) jobs.delete(id);
+  }
+}
 
 // finished jobs linger 10 minutes for polling, then make room for new ones;
 // a scan stuck past 6 minutes (hung upstream fetch) is failed AND cancelled —
@@ -120,7 +135,7 @@ function startJob(address) {
       // a timed-out job must not resurrect: if the sweeper already answered
       // the poller with an error, the late result is discarded
       if (job.status !== "running") return;
-      const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades);
+      const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades, { signal: ac.signal });
       if (job.status !== "running") return; // the sweeper may fire mid-report too
       job.result = { ...report, reconciled, reconcileFailed, classifyFailed, coverage, ambiguous, transfersCount: tfs.length };
       job.status = "done";
@@ -167,6 +182,8 @@ const server = http.createServer(async (req, res) => {
     if (!ADDRESS_RE.test(address ?? "")) return json(res, 400, { error: "valid Solana address required" });
     const runningNow = [...jobs.values()].filter((j) => j.status === "running").length;
     if (runningNow >= 20) return json(res, 503, { error: "server busy, try again shortly" });
+    evictFinishedJobs();
+    if (jobs.size >= MAX_JOBS) return json(res, 503, { error: "server busy, try again shortly" });
     const job = startJob(address);
     return json(res, 202, { id: job.id, target: TARGET_TRADES });
   }
@@ -220,9 +237,23 @@ function json(res, code, body) {
 
 // 24h volume across the tracked tokenized-equity pools, via DexScreener.
 // One batched call per cache window; keeps the landing strip honest and live.
-let statsCache = null;
+let statsCache = null; // { at, data, empty }
+let statsInflight = null;
+const STATS_TTL_MS = 10 * 60 * 1000;
+// an empty strip is worth little time: a throttled burst must not freeze the
+// volume line for the whole 10-minute window
+const STATS_EMPTY_TTL_MS = Number(process.env.STATS_EMPTY_TTL_MS ?? 60 * 1000);
+
 async function marketStats() {
-  if (statsCache && Date.now() - statsCache.at < 10 * 60 * 1000) return statsCache.data;
+  if (statsCache && Date.now() - statsCache.at < (statsCache.empty ? STATS_EMPTY_TTL_MS : STATS_TTL_MS)) return statsCache.data;
+  // single-flight: a landing-page burst at cache expiry shares one upstream
+  // call instead of amplifying itself into the provider's rate limit
+  if (statsInflight) return statsInflight;
+  statsInflight = computeMarketStats().finally(() => { statsInflight = null; });
+  return statsInflight;
+}
+
+async function computeMarketStats() {
 
   // an unreadable stocks.json must degrade to an empty strip, not destroy the
   // response socket (the read sits outside the network try below)
@@ -239,12 +270,18 @@ async function marketStats() {
       const bestPerMint = new Map();
       for (const p of pairs ?? []) {
         const base = p.baseToken?.address;
-        if (!stocks[base]) continue;
-        if (!bestPerMint.has(base) || (p.liquidity?.usd ?? 0) > (bestPerMint.get(base).liquidity?.usd ?? 0)) bestPerMint.set(base, p);
+        // hasOwn: "__proto__"/"constructor" pass a plain [] lookup through the
+        // prototype chain and would enter the strip as untracked phantoms
+        if (!base || !Object.hasOwn(stocks, base)) continue;
+        const vol = Number(p.volume?.h24);
+        // one malformed field must not poison the whole aggregation (0 + "lots" -> NaN)
+        if (!Number.isFinite(vol)) continue;
+        const liq = p.liquidity?.usd ?? 0;
+        if (!bestPerMint.has(base) || liq > bestPerMint.get(base).liq) bestPerMint.set(base, { p, vol, liq });
       }
-      for (const [mint, p] of bestPerMint) {
-        out.volume24hUsd += p.volume?.h24 ?? 0;
-        out.top.push({ symbol: stocks[mint].symbol, volume24hUsd: p.volume?.h24 ?? 0, priceUsd: p.priceUsd });
+      for (const [mint, { p, vol }] of bestPerMint) {
+        out.volume24hUsd += vol;
+        out.top.push({ symbol: stocks[mint].symbol, volumeUsdUsd: vol, priceUsd: p.priceUsd });
       }
       out.tokensWithPools = out.top.length;
       out.volume24hUsd = Math.round(out.volume24hUsd);
@@ -255,7 +292,7 @@ async function marketStats() {
   } catch {
     // stale or empty strip beats a broken page
   }
-  statsCache = { at: Date.now(), data: out };
+  statsCache = { at: Date.now(), data: out, empty: mints.length > 0 && out.tokensWithPools === 0 };
   return out;
 }
 

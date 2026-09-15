@@ -18,9 +18,10 @@ const curated = (() => {
 const cache = new Map(); // mint -> { symbol, name, isStock, tags } | { isNull, nullUntil }
 const NULL_TTL_MS = Number(process.env.CLASSIFY_NULL_TTL_MS ?? 10 * 60 * 1000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// token metadata is attacker-controllable: strip control characters at the
-// source so they never reach terminals, CSV files or API consumers
-const clean = (s) => String(s ?? "").replace(/[\u0000-\u001F\u007F]/g, "");
+// token metadata is attacker-controllable: strip control characters AND
+// bidi/zero-width format characters at the source — a spoofed symbol must
+// not render indistinguishably from a real ticker next to real money
+const clean = (s) => String(s ?? "").replace(/[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "");
 
 /**
  * Look up token metadata and stock classification for a mint.

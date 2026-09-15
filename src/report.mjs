@@ -25,18 +25,27 @@ export async function buildReport(trades) {
 
   const rows = perStockSummary(byMint, (m) => metas.get(m));
 
-  // flatten per-lot closings into one 1099-B style list
+  // flatten per-lot closings into one 1099-B style list; unknown-basis
+  // disposals join as their own list — their gross proceeds are real and
+  // belong in the statement even when the cost basis is unknowable
   const closes = [];
+  const unknownCloses = [];
   for (const r of rows) {
     for (const c of r.closes ?? []) {
       closes.push({ symbol: r.symbol, mint: r.mint, ...c });
     }
+    for (const u of r.unknownCloses ?? []) {
+      unknownCloses.push({ symbol: r.symbol, mint: r.mint, ...u });
+    }
   }
   closes.sort((a, b) => b.soldTs - a.soldTs);
+  const disposals = [...closes, ...unknownCloses].sort((a, b) => b.soldTs - a.soldTs);
 
   return {
     rows,
     closes,
+    unknownCloses,
+    disposals,
     totalRealized: Math.round(rows.reduce((s, r) => s + r.realizedUsd, 0) * 100) / 100,
     totalAssumed: Math.round(rows.reduce((s, r) => s + (r.realizedAssumed ?? 0), 0) * 100) / 100,
     unknownBasis: rows.reduce((s, r) => s + (r.unknownBasis ?? 0), 0),

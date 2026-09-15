@@ -149,7 +149,7 @@ test("report payload carries every field the web UI binds to", async () => {
   const soldOrder = payload.closes.map((c) => c.soldTs);
   assert.deepEqual(soldOrder, [...soldOrder].sort((a, b) => b - a)); // newest disposal first
 
-  for (const f of ["rows", "closes", "totalRealized", "totalAssumed", "unknownBasis", "aggregatedDisposals", "priceCorrections", "tokens",
+  for (const f of ["rows", "closes", "unknownCloses", "disposals", "totalRealized", "totalAssumed", "unknownBasis", "aggregatedDisposals", "priceCorrections", "tokens",
     "reconciled", "coverage", "ambiguous", "transfersCount"]) {
     assert.ok(f in payload, `payload.${f} missing`);
   }

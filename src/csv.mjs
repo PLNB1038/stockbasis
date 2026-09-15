@@ -15,9 +15,16 @@ export function toCsv(closes) {
     return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const iso = (ts) => (ts ? new Date(ts * 1000).toISOString().slice(0, 10) : "unknown");
-  const qty = (v) => Number(v.toFixed(6)).toString(); // no raw float artifacts
+  // sub-micro quantities are real movements: show up to 9 decimals instead of
+  // rounding a booked disposal into a "0" ghost row; trailing zeros go away
+  const qty = (v) => {
+    const d = v !== 0 && Math.abs(v) < 1e-6 ? 9 : 6;
+    return v.toFixed(d).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  };
+  // unknown-basis rows carry no cost/gain — an empty cell, never a guess
+  const money = (v) => (v == null ? "" : v.toFixed(2));
   const lines = closes.map((c) =>
-    [c.symbol, c.mint, iso(c.acquiredTs), iso(c.soldTs), qty(c.qty), c.proceedsUsd.toFixed(2), c.costUsd.toFixed(2), c.pnlUsd.toFixed(2)]
+    [c.symbol, c.mint, iso(c.acquiredTs), iso(c.soldTs), qty(c.qty), c.proceedsUsd.toFixed(2), money(c.costUsd), money(c.pnlUsd)]
       .map(esc)
       .join(",")
   );

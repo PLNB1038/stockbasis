@@ -112,12 +112,12 @@ function render(job) {
   total.className = `total-value ${grand >= 0 ? "pos" : "neg"}`;
   const cov = job.result.coverage;
   const covTxt = cov?.fromTs ? ` · history ${day(cov.fromTs)} → ${day(cov.toTs)} (${cov.scanned.toLocaleString("en-US")} txs)` : "";
-  const closedDisposals = (job.result.closes ?? []).length;
-  $("total-sub").textContent = `${trades} stock trades · ${closedDisposals} closed disposals · ${wins}W/${losses}L · ${tokens} stocks` + covTxt + (showAssumed ? " · market-basis assumption ON" : "");
+  const disposals = job.result.disposals ?? job.result.closes ?? []; // unknown-basis disposals included
+  $("total-sub").textContent = `${trades} stock trades · ${disposals.length} disposals · ${wins}W/${losses}L · ${tokens} stocks` + covTxt + (showAssumed ? " · market-basis assumption ON" : "");
 
   const note = $("basis-note");
   const notes = [];
-  if (unknownBasis > 0 && !showAssumed) notes.push(`${unknownBasis} disposal${unknownBasis > 1 ? "s" : ""} with unknown cost basis (bought before the scanned history, or deposited from custody) excluded from P&L — tick the box above to assume market price for recent disposals (a current quote says nothing about an old sale's basis).`);
+  if (unknownBasis > 0 && !showAssumed) notes.push(`${unknownBasis} disposal${unknownBasis > 1 ? "s" : ""} with unknown cost basis (bought before the scanned history, or deposited from custody) listed with n/a basis and excluded from P&L — tick the box above to assume market price for recent disposals (a current quote says nothing about an old sale's basis).`);
   if ((job.result.priceCorrections ?? 0) > 0) notes.push(`${job.result.priceCorrections} recent trade${job.result.priceCorrections > 1 ? "s" : ""} valued at market price (cash leg ambiguous in an aggregated route).`);
   if ((job.result.ambiguous ?? 0) > 0) notes.push(`${job.result.ambiguous} older trade${job.result.ambiguous > 1 ? "s" : ""} excluded from P&L as ambiguous (aggregated route, no reliable historical price — the shares still left the inventory).`);
   if ((job.result.reconciled ?? 0) > 0) notes.push(`${job.result.reconciled} position${job.result.reconciled > 1 ? "s" : ""} from the scanned window reconciled to on-chain balances (some movements were not retrievable from public RPC).`);
@@ -131,21 +131,20 @@ function render(job) {
     note.hidden = true;
   }
 
-  const closes = job.result.closes ?? [];
-  lastCloses = closes;
-  $("drows").innerHTML = closes.slice(0, 100).map((c) => `
+  lastCloses = disposals;
+  $("drows").innerHTML = disposals.slice(0, 100).map((c) => `
     <tr>
       <td class="sym">${esc(c.symbol)}</td>
       <td class="num hint">${c.acquiredTs ? day(c.acquiredTs) : "unknown"}</td>
       <td class="num hint">${day(c.soldTs)}</td>
       <td class="num">${fmtQty(c.qty)}</td>
       <td class="num">${fmt(c.proceedsUsd)}</td>
-      <td class="num">${fmt(c.costUsd)}</td>
-      <td class="num ${c.pnlUsd >= 0 ? "pos" : "neg"}">${fmt(c.pnlUsd)}</td>
+      <td class="num">${c.costUsd != null ? fmt(c.costUsd) : '<span class="hint">n/a</span>'}</td>
+      <td class="num ${c.pnlUsd != null ? (c.pnlUsd >= 0 ? "pos" : "neg") : ""}">${c.pnlUsd != null ? fmt(c.pnlUsd) : '<span class="hint">n/a</span>'}</td>
     </tr>`).join("");
-  $("dnote").textContent = closes.length > 100 ? `Showing 100 of ${closes.length} disposals — the full list is in the CSV.` : "";
-  $("dnote").hidden = closes.length <= 100;
-  $("dtable").hidden = !closes.length;
+  $("dnote").textContent = disposals.length > 100 ? `Showing 100 of ${disposals.length} disposals — the full list is in the CSV.` : "";
+  $("dnote").hidden = disposals.length <= 100;
+  $("dtable").hidden = !disposals.length;
 
   $("rows").innerHTML = rows.map((r) => {
     const noBasis = r.wins + r.losses === 0 && r.unknownBasis > 0 && !showAssumed;
@@ -178,7 +177,7 @@ $("csv").addEventListener("click", () => {
   const head = "symbol,mint,acquired_date,sold_date,qty,proceeds_usd,cost_basis_usd,gain_usd";
   const d = (ts) => (ts ? new Date(ts * 1000).toISOString().slice(0, 10) : "unknown");
   const lines = lastCloses.map((c) =>
-    [csvSafe(c.symbol), csvSafe(c.mint), d(c.acquiredTs), d(c.soldTs), fmtQty(c.qty), c.proceedsUsd.toFixed(2), c.costUsd.toFixed(2), c.pnlUsd.toFixed(2)].join(",")
+    [csvSafe(c.symbol), csvSafe(c.mint), d(c.acquiredTs), d(c.soldTs), fmtQty(c.qty), c.proceedsUsd.toFixed(2), c.costUsd != null ? c.costUsd.toFixed(2) : "", c.pnlUsd != null ? c.pnlUsd.toFixed(2) : ""].join(",")
   );
   const blob = new Blob([head + "\n" + lines.join("\n")], { type: "text/csv" });
   const a = document.createElement("a");
@@ -194,7 +193,9 @@ const compact = (n) =>
   n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(n);
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const fmt = (n) => `${n >= 0 ? "+" : "−"}${usd.format(Math.abs(n))}`;
-const fmtQty = (q) => Number(q.toFixed(6)).toString();
+// sub-micro quantities are real movements: show up to 9 decimals instead of
+// rounding a booked disposal into a "0" ghost row
+const fmtQty = (q) => { const d = q !== 0 && Math.abs(q) < 1e-6 ? 9 : 6; return q.toFixed(d).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, ""); };
 const csvSafe = (s) => {
   let v = String(s);
   // pure numbers stay numeric even when negative — a leading apostrophe
@@ -202,12 +203,10 @@ const csvSafe = (s) => {
   if (!/^-?\d+(\.\d+)?$/.test(v) && /^[=+\-@]/.test(v.trimStart())) v = "'" + v;
   return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
 };
-const day = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" });
-const dates = (r) => {
-  if (!r.firstTs) return "";
-  const f = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" });
-  return `${f(r.firstTs)} → ${f(r.lastTs)}`;
-};
+// dates render in UTC — the same day the CSV and CLI print, so a lot has one
+// birthday in every artifact
+const day = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit", timeZone: "UTC" });
+const dates = (r) => (r.firstTs ? `${day(r.firstTs)} → ${day(r.lastTs)}` : "");
 const esc = (s) => String(s ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 const show = (id) => ($(id).hidden = false);
 const hide = (id) => ($(id).hidden = true);

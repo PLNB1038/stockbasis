@@ -1,0 +1,35 @@
+// Test helper for test/lifecycle.test.mjs: the real server module with the
+// market-stats upstream faked. DS_MODE picks the scenario:
+//   throttle — the first DexScreener call answers 429, every later one healthy
+//   proto    — a pair whose baseToken.address is "__proto__" plus a healthy one
+//   nan      — a healthy pair plus one with a non-numeric volume field
+// Never run directly.
+import { readFileSync } from "node:fs";
+
+const stocks = JSON.parse(readFileSync(new URL("../../data/stocks.json", import.meta.url), "utf8"));
+const mints = Object.keys(stocks);
+let dsCalls = 0;
+const realFetch = globalThis.fetch;
+globalThis.fetch = (url, opts) => {
+  if (String(url).includes("api.dexscreener.com")) {
+    dsCalls++;
+    console.log(`DSCALL ${dsCalls}`);
+    const mode = process.env.DS_MODE ?? "throttle";
+    if (mode === "throttle" && dsCalls === 1) return Promise.resolve({ ok: false, status: 429 });
+    const pairs = mode === "proto"
+      ? [
+          { baseToken: { address: "__proto__" }, priceUsd: 1, liquidity: { usd: 5 }, volume: { h24: 999_999_999 } },
+          { baseToken: { address: mints[0] }, priceUsd: 2.5, liquidity: { usd: 9000 }, volume: { h24: 12345 } },
+        ]
+      : mode === "nan"
+        ? [
+            { baseToken: { address: mints[0] }, priceUsd: 2.5, liquidity: { usd: 9000 }, volume: { h24: 12345 } },
+            { baseToken: { address: mints[1] }, priceUsd: 3, liquidity: { usd: 8000 }, volume: { h24: "lots" } },
+          ]
+        : [{ baseToken: { address: mints[0] }, priceUsd: 2.5, liquidity: { usd: 9000 }, volume: { h24: 12345 } }];
+    return Promise.resolve({ ok: true, json: async () => pairs });
+  }
+  return realFetch(url, opts);
+};
+process.env.STOCKBASIS_NO_FEATURED = "1";
+await import("../../src/server.mjs");

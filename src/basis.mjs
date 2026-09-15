@@ -156,8 +156,9 @@ export function perStockSummary(tradesByMint, meta) {
   for (const [mint, trades] of tradesByMint) {
     const b = fifoBasis(trades);
     const m = meta(mint) ?? { symbol: mint.slice(0, 6), name: "unknown" };
+    // break-even (pnl exactly 0) is neither a win nor a loss
     const wins = b.closes.filter((c) => c.pnlUsd > 0).length;
-    const losses = b.closes.filter((c) => c.pnlUsd <= 0).length;
+    const losses = b.closes.filter((c) => c.pnlUsd < 0).length;
     rows.push({
       mint,
       symbol: m.symbol,
@@ -168,6 +169,7 @@ export function perStockSummary(tradesByMint, meta) {
       wins,
       losses,
       unknownBasis: b.unknownBasis.length,
+      unknownCloses: b.unknownBasis, // per-disposal details: gross proceeds belong in the statement even without basis
       realizedAssumed: round(b.realizedAssumed, 2),
       closes: b.closes,
       realizedUsd: round(b.realizedUsd, 2),

@@ -76,7 +76,9 @@ export async function ingestWallet(address, opts = {}) {
       };
       await pairTrades(deltas, ctx, trades, transfers, stats);
     }
-    opts.onProgress?.({ scanned, trades: trades.length, budget: maxTx });
+    // the progress counter means the same as the stop target: buys/sells only —
+    // custody movements must not read as "stock trades found"
+    opts.onProgress?.({ scanned, trades: trades.filter((t) => t.side === "buy" || t.side === "sell").length, budget: maxTx });
   }
 
   const { corrected, ambiguous } = await priceSanityGate(trades);
