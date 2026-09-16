@@ -20,9 +20,12 @@ treat these tokens like meme coins, not securities.
 ## How it works
 
 The scanner walks the wallet's public transaction history, classifies every
-tokenized-equity mint (xStocks, Backpack Securities, Ondo, PreStocks) by on-chain
-token tags, reconstructs trades by diffing pre/post token balances, and computes
-FIFO cost basis per lot.
+tokenized-equity mint (xStocks, Backpack Securities, Ondo, PreStocks, Tessera
+T-Tokens) by on-chain token tags, reconstructs trades by diffing pre/post
+token balances, and computes FIFO cost basis per lot. The curated fallback
+list is synced from issuer APIs, so a wallet holding pre-IPO exposure —
+PreStocks' ANDURIL or SPACEX, Tessera's T-OpenAI or T-Kalshi — gets a fully
+classified statement without any metadata lookup.
 
 Read-only by design: the tool never asks for keys, never requests approvals, and
 never moves funds. There is no on-chain program because none is needed — on Solana
@@ -75,7 +78,8 @@ activity (budget-capped); every report shows the exact window and transaction
 count it covers, so treat it as a preliminary statement for that window. Known
 simplifications: address validation is a base58 shape check; WSOL cash legs
 are priced per day; a new tokenized ticker appears in reports as soon as
-Jupiter tags it, with a curated list as fallback.
+Jupiter tags it, with a curated list (synced from issuer APIs: PreStocks,
+Tessera) as fallback.
 
 ## Tests
 

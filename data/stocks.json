@@ -1,74 +1,106 @@
 {
-  "XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W": {
-    "symbol": "SPYx",
-    "name": "SP500 xStock"
-  },
-  "XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB": {
-    "symbol": "TSLAx",
-    "name": "Tesla xStock"
-  },
-  "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp": {
-    "symbol": "AAPLx",
-    "name": "Apple xStock"
-  },
-  "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh": {
-    "symbol": "NVDAx",
-    "name": "NVIDIA xStock"
-  },
-  "XspzcW1PRtgf6Wj92HCiZdjzKCyFekVD8P5Ueh3dRMX": {
-    "symbol": "MSFTx",
-    "name": "Microsoft xStock"
-  },
-  "XsCPL9dNWBMvFtTmwcCA5v3xWPSMEBCszbQdiLLq6aN": {
-    "symbol": "GOOGLx",
-    "name": "Alphabet xStock"
-  },
-  "Xs3eBt7uRfJX8QUs4suhyU8p2M6DoUDrJyWBa8LLZsg": {
-    "symbol": "AMZNx",
-    "name": "Amazon xStock"
-  },
-  "Xsa62P5mvPszXL1krVUnU5ar38bBSVcWAB6fmPCo5Zu": {
-    "symbol": "METAx",
-    "name": "Meta xStock"
-  },
-  "Xs7ZdzSHLU9ftNJsii5fCeJhoRWSC32SQGzGQtePxNu": {
-    "symbol": "COINx",
-    "name": "Coinbase xStock"
-  },
-  "XsvNBAYkrDRNhA7wPHQfX3ZUXZyZLdnCQDfHZ56bzpg": {
-    "symbol": "HOODx",
-    "name": "Robinhood xStock"
-  },
-  "MSTRdWXMeZxdE8osAQy3fA4rvTY5rgummDSMEx6U7Nz": {
-    "symbol": "MSTR",
-    "name": "Strategy - Backpack Securities"
-  },
-  "DELL2aRKQz7DMq5DrKLtkn47ZCnbxXPZXrSGbkmd13wy": {
-    "symbol": "DELL",
-    "name": "Dell Technologies - Backpack Securities"
-  },
-  "XsoBhf2ufR8fTyNSjqfU71DYGaE6Z3SUGAidpzriAA4": {
-    "symbol": "PLTRx",
-    "name": "Palantir xStock"
-  },
-  "WENAZ2WyPbmgvUcKfQ8hyMDfBQP9bZ65hsZ5KTFrRGZ": {
-    "symbol": "WEN",
-    "name": "The Wendy's Company - Backpack Securities"
-  },
-  "DKNGQFNGQmoBdXSRGKJ8tTu7uPDasw5JDcfMmWniNfow": {
-    "symbol": "DKNG",
-    "name": "DraftKings - Backpack Securities"
-  },
-  "PreweJYECqtQwBtpxHL171nL2K6umo692gTm7Q3rpgF": {
-    "symbol": "OPENAI",
-    "name": "OpenAI PreStocks"
-  },
-  "Pre8AREmFPtoJFT8mQSXQLh56cwJmM7CFDRuoGBZiUP": {
-    "symbol": "POLYMARKET",
-    "name": "Polymarket PreStocks"
-  },
-  "Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw": {
-    "symbol": "ANTHROPIC",
-    "name": "Anthropic PreStocks"
-  }
+ "XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W": {
+  "symbol": "SPYx",
+  "name": "SP500 xStock"
+ },
+ "XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB": {
+  "symbol": "TSLAx",
+  "name": "Tesla xStock"
+ },
+ "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp": {
+  "symbol": "AAPLx",
+  "name": "Apple xStock"
+ },
+ "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh": {
+  "symbol": "NVDAx",
+  "name": "NVIDIA xStock"
+ },
+ "XspzcW1PRtgf6Wj92HCiZdjzKCyFekVD8P5Ueh3dRMX": {
+  "symbol": "MSFTx",
+  "name": "Microsoft xStock"
+ },
+ "XsCPL9dNWBMvFtTmwcCA5v3xWPSMEBCszbQdiLLq6aN": {
+  "symbol": "GOOGLx",
+  "name": "Alphabet xStock"
+ },
+ "Xs3eBt7uRfJX8QUs4suhyU8p2M6DoUDrJyWBa8LLZsg": {
+  "symbol": "AMZNx",
+  "name": "Amazon xStock"
+ },
+ "Xsa62P5mvPszXL1krVUnU5ar38bBSVcWAB6fmPCo5Zu": {
+  "symbol": "METAx",
+  "name": "Meta xStock"
+ },
+ "Xs7ZdzSHLU9ftNJsii5fCeJhoRWSC32SQGzGQtePxNu": {
+  "symbol": "COINx",
+  "name": "Coinbase xStock"
+ },
+ "XsvNBAYkrDRNhA7wPHQfX3ZUXZyZLdnCQDfHZ56bzpg": {
+  "symbol": "HOODx",
+  "name": "Robinhood xStock"
+ },
+ "MSTRdWXMeZxdE8osAQy3fA4rvTY5rgummDSMEx6U7Nz": {
+  "symbol": "MSTR",
+  "name": "Strategy - Backpack Securities"
+ },
+ "DELL2aRKQz7DMq5DrKLtkn47ZCnbxXPZXrSGbkmd13wy": {
+  "symbol": "DELL",
+  "name": "Dell Technologies - Backpack Securities"
+ },
+ "XsoBhf2ufR8fTyNSjqfU71DYGaE6Z3SUGAidpzriAA4": {
+  "symbol": "PLTRx",
+  "name": "Palantir xStock"
+ },
+ "WENAZ2WyPbmgvUcKfQ8hyMDfBQP9bZ65hsZ5KTFrRGZ": {
+  "symbol": "WEN",
+  "name": "The Wendy's Company - Backpack Securities"
+ },
+ "DKNGQFNGQmoBdXSRGKJ8tTu7uPDasw5JDcfMmWniNfow": {
+  "symbol": "DKNG",
+  "name": "DraftKings - Backpack Securities"
+ },
+ "PreweJYECqtQwBtpxHL171nL2K6umo692gTm7Q3rpgF": {
+  "symbol": "OPENAI",
+  "name": "OpenAI PreStocks"
+ },
+ "Pre8AREmFPtoJFT8mQSXQLh56cwJmM7CFDRuoGBZiUP": {
+  "symbol": "POLYMARKET",
+  "name": "Polymarket PreStocks"
+ },
+ "Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw": {
+  "symbol": "ANTHROPIC",
+  "name": "Anthropic PreStocks"
+ },
+ "PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB": {
+  "symbol": "ANDURIL",
+  "name": "Anduril PreStocks"
+ },
+ "PreZad18qfPtbxNpMtMuAuX2zVpvkEU8DnJx56faCWd": {
+  "symbol": "FIGUREAI",
+  "name": "Figure AI PreStocks"
+ },
+ "PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua": {
+  "symbol": "KALSHI",
+  "name": "Kalshi PreStocks"
+ },
+ "PrekqLJvJ3qVdXmBGDiexvwUTF4rLFDa6HWS4HJbw9S": {
+  "symbol": "NEURALINK",
+  "name": "Neuralink PreStocks"
+ },
+ "PreANxuXjsy2pvisWWMNB6YaJNzr7681wJJr2rHsfTh": {
+  "symbol": "SPACEX",
+  "name": "SpaceX PreStocks"
+ },
+ "oPAiAikWTaFj9RYoRFD35ccfwhnMcB3ThgBZRHSkjTZ": {
+  "symbol": "T-OpenAI",
+  "name": "Tessera T-OpenAI"
+ },
+ "TKLSidmLVt3cqGaaodG8tyRzoANfQwoh67AccjmubeZ": {
+  "symbol": "T-Kalshi",
+  "name": "Tessera T-Kalshi"
+ },
+ "TSPXcLV76s6V2zDiZQ18kBfcbnjaE2ZzNT3ga2Pd99v": {
+  "symbol": "T-SpaceX",
+  "name": "Tessera T-SpaceX"
+ }
 }
