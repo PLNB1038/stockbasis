@@ -1,5 +1,7 @@
 [
   { "address": "EJBQLNEH1x6buMSpUS4TLCknXygyfkbSQ2eyFqWEkv5U", "label": "Retail trader — NVDAx, MCDx, COST and more" },
   { "address": "9BB7Tt5uE5VdRsxA5XRqrjwNaq8XtgAUQW8czA6ymUPG", "label": "Day trader — 230+ trades across 18 tokenized equities" },
-  { "address": "GrQAn6YFKA66nAQut5pySVURYvS8TqEP1cgwBddmPSXZ", "label": "20+ stock tokens incl. pre-IPO" }
+  { "address": "GrQAn6YFKA66nAQut5pySVURYvS8TqEP1cgwBddmPSXZ", "label": "20+ stock tokens incl. pre-IPO" },
+  { "address": "Ho5371Kc1Kxy7ze85UYzZ4BUfSkLg39Xp3B424RuYrbC", "label": "Pre-IPO trader — SPACEX round trips and more" },
+  { "address": "6YaY9k8wWEVBisQUGZvyV8c2EP7J5ronxJPqgWrukJPY", "label": "Tessera trader — T-OpenAI, T-SpaceX, T-Kalshi round trips" }
 ]
