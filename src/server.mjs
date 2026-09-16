@@ -266,7 +266,10 @@ const server = http.createServer(async (req, res) => {
 });
 
 function json(res, code, body) {
-  res.writeHead(code, { "Content-Type": "application/json" });
+  // no-store: a stale proxy in front of the app must not answer a job poll
+  // with a cached "running" body forever — the poll loop trusts these bodies
+  // to describe a live job
+  res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });
   // HEAD must behave like GET minus the body: a 404 on a live API route
   // tells uptime probes the service is dead when it is not
   res.end(res.req?.method === "HEAD" ? undefined : JSON.stringify(body));

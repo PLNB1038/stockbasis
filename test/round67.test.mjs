@@ -264,7 +264,7 @@ test("ingest: environment numbers fall back to defaults on typos and empty strin
 
 const spawnServer = async (args, env) => {
   const port = 20000 + Math.floor(Math.random() * 20000);
-  const child = spawn(process.execPath, args, { cwd: ROOT, env: { ...process.env, PORT: String(port), ...env }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, args, { cwd: ROOT, env: { ...process.env, PORT: String(port), SB_FIXTURE_SPAWNED: "1", ...env }, stdio: ["ignore", "pipe", "pipe"] });
   children.push(child);
   const base = `http://127.0.0.1:${port}`;
   if (!(await waitReady(base))) throw new Error("server child did not come up");

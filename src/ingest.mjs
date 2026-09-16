@@ -77,6 +77,7 @@ export async function ingestWallet(address, opts = {}) {
         signature: s.signature,
         signal, // reaches lookupToken: an aborted scan stops paying for metadata too
         solDelta: walletSolDelta(tx, address), // lamports; catches WSOL legs that open+close in one tx
+        closedAta: closedTokenAccounts(tx.meta, address), // rent refunds ride the same delta
       };
       await pairTrades(deltas, ctx, trades, transfers, stats);
     }
@@ -216,22 +217,31 @@ export function tokenDeltas(meta, owner) {
     // flip-in against the previous owner's balance would understate the
     // deposit, and the flip-out would vanish entirely (the account key still
     // exists post-tx, so neither loop below would see it)
-    const was = pb.owner === owner && !ownerChanged ? num(before?.uiTokenAmount) ?? 0 : 0;
-    const now = num(pb.uiTokenAmount) ?? 0;
     if (pb.owner === owner) {
+      const now = num(pb.uiTokenAmount);
+      // an unreadable post balance (hostile uiAmount like 1e999) must not
+      // coerce into an Infinity/phantom delta — the honest answer is "this
+      // tx's balance change is unknown", same skip a missing blockTime gets
+      if (now == null) continue;
+      const wasRaw = ownerChanged ? 0 : num(before?.uiTokenAmount);
+      // the account was ours before AND after with an unreadable pre value:
+      // coerced to 0 it would invent a phantom full deposit, so skip instead
+      if (!ownerChanged && before != null && wasRaw == null) continue;
+      const was = wasRaw ?? 0; // absent or previously-not-ours: 0 is the truth
       if (Math.abs(now - was) >= DUST_EPS) out.push({ mint: pb.mint, delta: now - was });
     } else if (before?.owner === owner) {
       // the account left our ownership mid-tx: the full prior balance is a
-      // disposal, whatever the (possibly unchanged) post balance says
-      const wasOurs = num(before.uiTokenAmount) ?? 0;
-      if (Math.abs(wasOurs) >= DUST_EPS) out.push({ mint: before.mint, delta: -wasOurs });
+      // disposal, whatever the (possibly unchanged) post balance says — but
+      // an unreadable prior balance is a hole, not a zero disposal
+      const wasOurs = num(before.uiTokenAmount);
+      if (wasOurs != null && Math.abs(wasOurs) >= DUST_EPS) out.push({ mint: before.mint, delta: -wasOurs });
     }
   }
   // balances that existed before but vanished (account closed in this tx)
   for (const [k, pb] of pre) {
     if (post.some(([pk]) => pk === k)) continue;
-    const was = num(pb.uiTokenAmount) ?? 0;
-    if (Math.abs(was) >= DUST_EPS && pb.owner === owner) out.push({ mint: pb.mint, delta: -was });
+    const was = num(pb.uiTokenAmount);
+    if (was != null && Math.abs(was) >= DUST_EPS && pb.owner === owner) out.push({ mint: pb.mint, delta: -was });
   }
   return out;
 
@@ -241,12 +251,17 @@ export function tokenDeltas(meta, owner) {
     return `${b.mint}:${b.accountIndex ?? b.tokenAccount ?? b.address ?? ""}`;
   }
   function num(a) {
+    // balances are attacker-adjacent data: uiAmount can be hostile garbage
+    // ("1e999" parses to Infinity) — only a finite number counts as read,
+    // null means "this balance could not be read" and callers must skip,
+    // never coerce the hole into a 0 balance (that invents phantom trades)
     const s = a?.uiAmountString;
     if (s != null) {
       const v = Number(s);
       if (Number.isFinite(v)) return v;
     }
-    return a?.uiAmount ?? null;
+    const v = a?.uiAmount;
+    return Number.isFinite(v) ? v : null;
   }
 }
 
@@ -256,6 +271,23 @@ export function tokenDeltas(meta, owner) {
  * @returns {Promise<void>}
  */
 const MIN_SOL_LEG = envInt(process.env.MIN_SOL_LEG, 0.01); // SOL: below this a delta is rent/fee dust, not a cash leg
+// Closing a token account refunds its rent-exempt deposit (~0.0021 SOL at
+// the historical maximum). Five closed ATAs clear the 0.01 SOL leg floor, so
+// the raw solDelta would book refund dust as sale proceeds. The constant is
+// an upper bound of the refund: clipping by it can only ever trim rent,
+// never real cash (at most a cent of true tail at SOL ~$200).
+const RENT_PER_CLOSED_ATA = 2_100_000; // lamports
+
+/** Token accounts of `owner` present before the tx and gone after (closed). */
+function closedTokenAccounts(meta, owner) {
+  const key = (b) => `${b.mint}:${b.accountIndex ?? b.tokenAccount ?? b.address ?? ""}`;
+  const post = new Set((meta.postTokenBalances ?? []).map(key));
+  let n = 0;
+  for (const b of meta.preTokenBalances ?? []) {
+    if (b.owner === owner && !post.has(key(b))) n++;
+  }
+  return n;
+}
 
 export async function pairTrades(deltas, ctx, trades, transfers, stats = { classifyFailed: 0 }) {
   // net movements per mint first — dust in a second token account of the same
@@ -338,16 +370,20 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
       // most "missing" cash legs are wrapped SOL created and burned inside the
       // same transaction: the wallet's SOL balance shows the money moving.
       // Rent reclaims and fee dust sit below the leg floor — a gift plus a
-      // closed empty ATA must not book a micro-"sale".
+      // closed empty ATA must not book a micro-"sale"; rent refunded for
+      // closed accounts is clipped off before the floor is applied.
       const sol = ctx.solDelta ?? 0;
-      if (sol !== 0 && Math.sign(sol) !== Math.sign(e.delta) && Math.abs(sol) >= MIN_SOL_LEG * 1e9) {
+      const netSol = sol !== 0 && Math.sign(sol) !== Math.sign(e.delta)
+        ? Math.abs(sol) - (ctx.closedAta ?? 0) * RENT_PER_CLOSED_ATA
+        : 0;
+      if (netSol >= MIN_SOL_LEG * 1e9) {
         const price = await ensureSolPrice();
         if (Number.isFinite(price)) {
           trades.push({
             side: e.delta > 0 ? "buy" : "sell",
             mint: e.mint,
             qty: Math.abs(e.delta),
-            valueUsd: (Math.abs(sol) / 1e9) * price,
+            valueUsd: (netSol / 1e9) * price,
             ts: ctx.ts,
             slot: ctx.slot,
             signature: ctx.signature,
@@ -370,44 +406,58 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
     }
     // stablecoin legs are self-priced; WSOL legs need the SOL price
     let valueUsd = 0;
-    let priced = true;
+    const unpriced = []; // cash legs with no price source right now
     for (const c of legs) {
       if (c.mint === WSOL) {
-        if (!Number.isFinite(solPrice)) priced = false;
-        else valueUsd += Math.abs(c.delta) * solPrice;
+        if (Number.isFinite(solPrice)) valueUsd += Math.abs(c.delta) * solPrice;
+        else unpriced.push(c);
       } else valueUsd += Math.abs(c.delta);
     }
     // routes can split proceeds between a stable tail and native SOL: a
     // temporary WSOL account unwrapped inside the tx never shows up in the
     // token balances, only in solDelta — that native side is cash of the SAME
-    // trade, priced on top of the stable legs, never dropped
+    // trade, priced on top of the stable legs, never dropped. Rent refunded
+    // for closed token accounts rides the same delta and is not proceeds.
     const sol = ctx.solDelta ?? 0;
-    if (sol !== 0 && Math.sign(sol) !== Math.sign(e.delta) && Math.abs(sol) >= MIN_SOL_LEG * 1e9) {
-      const price = await ensureSolPrice();
-      if (!Number.isFinite(price)) priced = false;
-      else valueUsd += (Math.abs(sol) / 1e9) * price;
+    let solTail = 0; // lamports of the native tail that are real cash, not rent
+    if (sol !== 0 && Math.sign(sol) !== Math.sign(e.delta)) {
+      const net = Math.abs(sol) - (ctx.closedAta ?? 0) * RENT_PER_CLOSED_ATA;
+      if (net >= MIN_SOL_LEG * 1e9) solTail = net;
     }
-    if (!priced) {
-      // no price source for the WSOL leg: a movement without a value, never a
-      // guess — and never a disappearance: the shares still left/arrived
-      for (const c of legs) {
-        cash.splice(cash.indexOf(c), 1);
-        transfers.push({ mint: c.mint, delta: c.delta, ...ctx });
-      }
-      transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
-      trades.push({ side: e.delta < 0 ? "out" : "in", mint: e.mint, qty: Math.abs(e.delta), valueUsd: 0, ts: ctx.ts, slot: ctx.slot, signature: ctx.signature });
+    let tailUnpriced = false;
+    if (solTail > 0) {
+      const price = await ensureSolPrice();
+      if (Number.isFinite(price)) valueUsd += (solTail / 1e9) * price;
+      else tailUnpriced = true;
+    }
+    if (valueUsd > 0) {
+      // the priced part books the trade even when the SOL side has no price
+      // source: known money (the stable legs) must never be thrown away with
+      // the unknown. The unpriced tail still moved the wallet, so it lands in
+      // the ledger as a disclosed movement instead of vanishing.
+      for (const c of unpriced) transfers.push({ mint: c.mint, delta: c.delta, ...ctx });
+      if (tailUnpriced) transfers.push({ mint: WSOL, delta: solTail / 1e9, ...ctx });
+      for (const c of legs) cash.splice(cash.indexOf(c), 1); // consumed either way
+      trades.push({
+        side: e.delta > 0 ? "buy" : "sell",
+        mint: e.mint,
+        qty: Math.abs(e.delta),
+        valueUsd,
+        ts: ctx.ts,
+        slot: ctx.slot,
+        signature: ctx.signature,
+      });
       continue;
     }
-    for (const c of legs) cash.splice(cash.indexOf(c), 1); // consumed
-    trades.push({
-      side: e.delta > 0 ? "buy" : "sell",
-      mint: e.mint,
-      qty: Math.abs(e.delta),
-      valueUsd,
-      ts: ctx.ts,
-      slot: ctx.slot,
-      signature: ctx.signature,
-    });
+    // nothing priced at all: a movement without a value, never a guess —
+    // and never a disappearance: the shares still left/arrived
+    for (const c of legs) {
+      cash.splice(cash.indexOf(c), 1);
+      transfers.push({ mint: c.mint, delta: c.delta, ...ctx });
+    }
+    transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
+    trades.push({ side: e.delta < 0 ? "out" : "in", mint: e.mint, qty: Math.abs(e.delta), valueUsd: 0, ts: ctx.ts, slot: ctx.slot, signature: ctx.signature });
+    continue;
   }
 }
 

@@ -61,7 +61,7 @@ const spawnStats = async (dsMode) => {
   const port = 20000 + Math.floor(Math.random() * 20000);
   const child = spawn(process.execPath, [path.join("test", "fixtures", "stats-child.mjs")], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port), DS_MODE: dsMode },
+    env: { ...process.env, PORT: String(port), DS_MODE: dsMode, SB_FIXTURE_SPAWNED: "1" },
     stdio: ["ignore", "ignore", "ignore"],
   });
   const base = `http://127.0.0.1:${port}`;
@@ -202,7 +202,7 @@ test("stats: one upstream call per burst; an empty strip recovers quickly, not a
   const base = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, [path.join("test", "fixtures", "stats-child.mjs")], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(port), STATS_EMPTY_TTL_MS: "400" },
+    env: { ...process.env, PORT: String(port), STATS_EMPTY_TTL_MS: "400", SB_FIXTURE_SPAWNED: "1" },
     stdio: ["ignore", "pipe", "ignore"],
   });
   let out = "";

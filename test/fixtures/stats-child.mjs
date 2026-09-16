@@ -7,6 +7,16 @@
 // Never run directly.
 import { readFileSync } from "node:fs";
 
+// the test runner treats every .mjs under test/ as a test file, including
+// this helper: run that way it would import a server that never exits and
+// hang the whole run with no timeout and no output. A real spawn (from
+// lifecycle.test.mjs / round67.test.mjs) sets SB_FIXTURE_SPAWNED; anything
+// else must exit at once so a plain `npm test` stays runnable.
+if (process.env.SB_FIXTURE_SPAWNED !== "1") {
+  console.log("stats-child is a spawned fixture, not a test - exiting");
+  process.exit(0);
+}
+
 const stocks = JSON.parse(readFileSync(new URL("../../data/stocks.json", import.meta.url), "utf8"));
 const mints = Object.keys(stocks);
 let dsCalls = 0;

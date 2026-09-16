@@ -1,8 +1,18 @@
 // Solana JSON-RPC client: global pacing, backoff, endpoint rotation on 429/5xx.
 
 const DEFAULT_RPC = "https://api.mainnet-beta.solana.com,https://solana-rpc.publicnode.com";
-const MIN_INTERVAL_MS = Number(process.env.RPC_MIN_INTERVAL_MS ?? 120);
-const MAX_RETRIES = Number(process.env.RPC_MAX_RETRIES ?? 6);
+// finite-or-default like every other env number: a typo ("5x") parses to NaN
+// and NaN comparisons are always false — the retry cap would never trigger
+// and one throttled mirror would wedge the serialized queue forever; an
+// empty string parses to 0 and kills rotation on the first 429 instead.
+// (Local copy: importing the shared helper from ingest.mjs would be a cycle.)
+const envInt = (v, dflt) => {
+  if (v == null || String(v).trim() === "") return dflt;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : dflt;
+};
+const MIN_INTERVAL_MS = envInt(process.env.RPC_MIN_INTERVAL_MS, 120);
+const MAX_RETRIES = envInt(process.env.RPC_MAX_RETRIES, 6);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -27,8 +37,10 @@ let endpointIdx = 0;
 function endpoints(opts) {
   // comma-separated list → on repeated 429/5xx we rotate to the next mirror.
   // Duplicates are removed: with the same URL listed twice, one "not found"
-  // answer can never fill two holes and the rotation below would spin forever
-  const raw = opts.rpcUrl ?? process.env.SOLANA_RPC ?? DEFAULT_RPC;
+  // answer can never fill two holes and the rotation below would spin forever.
+  // An EMPTY override is "no override": || keeps it falling through to the
+  // default list instead of fetching the literal string "" (parse failure)
+  const raw = opts.rpcUrl || process.env.SOLANA_RPC || DEFAULT_RPC;
   return [...new Set(raw.split(",").map((s) => s.trim()).filter(Boolean))];
 }
 

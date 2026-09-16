@@ -83,8 +83,16 @@ async function poll(id, seq) {
       // a 200-OK body that is not a job record (a gateway or captive-portal
       // page that still parses as JSON) is a network blip, not progress:
       // swallowing it as "still running" would poll forever over
-      // "Scanned undefined" progress and a NaN bar
-      if (typeof job?.status !== "string") {
+      // "Scanned undefined" progress and a NaN bar. Checking status alone is
+      // not enough — {status:"running"} passes it and reproduces the same
+      // hang — so the whole record shape must be coherent: progress numbers
+      // while running, a result on done, an error message on error
+      const shaped = typeof job?.status === "string" && (
+        job.status === "done" ? job.result != null
+        : job.status === "error" ? typeof job.error === "string"
+        : Number.isFinite(job.progress) && Number.isFinite(job.trades)
+      );
+      if (!shaped) {
         if (++flaky > 5) throw { hard: true, message: "Unexpected server response — please scan again." };
         await new Promise((r) => setTimeout(r, 2000 * flaky));
         continue;
@@ -221,9 +229,10 @@ const compact = (n) =>
   n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(n);
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const fmt = (n) => `${n >= 0 ? "+" : "−"}${usd.format(Math.abs(n))}`;
-// sub-milli quantities are real movements: show up to 9 decimals instead of
-// rounding a booked disposal into a "0" ghost row
-const fmtQty = (q) => { const d = q !== 0 && Math.abs(q) < 1e-3 ? 9 : 6; return q.toFixed(d).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, ""); };
+// sub-milli quantities are real movements: show up to 12 decimals instead of
+// rounding a booked disposal into a "0" ghost row (a 12-decimals mint's
+// smallest unit is exactly 1e-12 and must print as itself)
+const fmtQty = (q) => { const d = q !== 0 && Math.abs(q) < 1e-3 ? 12 : 6; return q.toFixed(d).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, ""); };
 const csvSafe = (s) => {
   let v = String(s);
   // pure numbers stay numeric even when negative — a leading apostrophe

@@ -15,10 +15,12 @@ export function toCsv(closes) {
     return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const iso = (ts) => (ts ? new Date(ts * 1000).toISOString().slice(0, 10) : "unknown");
-  // sub-milli quantities are real movements: show up to 9 decimals instead of
-  // rounding a booked disposal into a "0" ghost row; trailing zeros go away
+  // sub-milli quantities are real movements: show up to 12 decimals instead
+  // of rounding a booked disposal into a "0" ghost row (a 12-decimals mint's
+  // smallest unit is exactly 1e-12 and must print as itself); trailing
+  // zeros go away
   const qty = (v) => {
-    const d = v !== 0 && Math.abs(v) < 1e-3 ? 9 : 6;
+    const d = v !== 0 && Math.abs(v) < 1e-3 ? 12 : 6;
     return v.toFixed(d).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
   };
   // unknown-basis rows carry no cost/gain — an empty cell, never a guess;

@@ -16,9 +16,17 @@ const curated = (() => {
 })();
 
 const cache = new Map(); // mint -> { symbol, name, isStock, tags } | { isNull, nullUntil }
-// finite-or-default: a NaN TTL from a typo'd env var would make every null
-// cache entry expire instantly (or never) without any signal
-const NULL_TTL_MS = Number.isFinite(Number(process.env.CLASSIFY_NULL_TTL_MS)) ? Number(process.env.CLASSIFY_NULL_TTL_MS) : 10 * 60 * 1000;
+// finite-or-default, empty included: Number("") is 0 and 0 IS finite, so a
+// bare isFinite gate lets an empty env var expire the no-data cache
+// instantly — every repeat lookup would hit Jupiter again (and its 250ms+
+// pacing), silently stretching scan time and burning free-tier quota.
+// (Local copy: importing the shared helper from ingest.mjs would be a cycle.)
+const envInt = (v, dflt) => {
+  if (v == null || String(v).trim() === "") return dflt;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : dflt;
+};
+const NULL_TTL_MS = envInt(process.env.CLASSIFY_NULL_TTL_MS, 10 * 60 * 1000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // token metadata is attacker-controllable: strip control characters AND
 // bidi/zero-width format characters at the source — a spoofed symbol must
