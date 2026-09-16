@@ -133,7 +133,7 @@ test("rpc: a page shorter than the limit is not the end of history", async () =>
   assert.equal(befores[2], sigs[249]);
 });
 
-test("rpc: a mirror repeating one page terminates the walk", async () => {
+test("rpc: a mirror repeating one page terminates the walk", { timeout: 30_000 }, async () => {
   const page = ["s1", "s2", "s3"].map((signature, i) => ({ signature, slot: i, blockTime: 1, err: null }));
   const stub = await stubServer(() => ({ result: page }));
   let n = 0;

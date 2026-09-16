@@ -32,7 +32,13 @@ async function loadMarket() {
     if (!s.trackedTokens) return;
     const vol = s.volume24hUsd ? ` · $${compact(s.volume24hUsd)} traded in 24h` : "";
     const tops = (s.top ?? []).slice(0, 4).map((t) => t.symbol).join(" · ");
-    $("market").textContent = `${s.trackedTokens} tokenized-equity pools tracked on Solana${vol}`;
+    // the pool count comes from the live market feed; when the feed is down
+    // it is zero, and claiming "pools tracked" from the static universe list
+    // would print a number the market data cannot back
+    const strip = s.tokensWithPools
+      ? `${s.tokensWithPools} tokenized-equity pools tracked on Solana`
+      : `${s.trackedTokens} tokenized equities tracked on Solana`;
+    $("market").textContent = strip + vol;
     $("market").title = tops ? `Top pools: ${tops}` : "";
     $("market").hidden = false;
   } catch { /* strip is optional decoration */ }

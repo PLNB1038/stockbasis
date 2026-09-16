@@ -87,7 +87,9 @@ export function fifoBasis(trades) {
         }
         unk.qty -= take;
         need -= take;
-        if (unk.qty <= 1e-12) unknownQ.shift();
+        // strict drop: a deposit of exactly one 12-decimals atom (1e-12) is a
+        // real position and survives — the shared inclusive DUST_EPS contract
+        if (unk.qty < 1e-12) unknownQ.shift();
       } else {
         const take = Math.min(lot.qty, need);
         takenTotal += take;
@@ -95,8 +97,10 @@ export function fifoBasis(trades) {
         proceedsAlloc += proceeds;
         // cost: a full closure consumes the lot's exact remainder (rounding
         // tails settle in the last row); a partial take rounds with a clamp —
-        // float noise in take/lot.qty must never leave a negative-cost lot
-        const cost = take >= lot.qty - 1e-12
+        // float noise in take/lot.qty must never leave a negative-cost lot.
+        // "Full" is RELATIVE: an absolute epsilon treats a lot of a few
+        // 12-decimals atoms as always-fully-consumed and steals its remainder
+        const cost = take >= lot.qty * (1 - 1e-9)
           ? lot.costUsd
           : Math.min(cents((take / lot.qty) * lot.costUsd), lot.costUsd);
         // totals accumulate the same atoms the rows print — a raw float
@@ -109,7 +113,8 @@ export function fifoBasis(trades) {
         lot.qty -= take;
         lot.costUsd -= cost;
         need -= take;
-        if (lot.qty <= 1e-12) lots.shift();
+        // strict drop: one atom of a 12-decimals mint is a real open position
+        if (lot.qty < 1e-12) lots.shift();
       }
     }
     return { need, taken: takenTotal, alloc: proceedsAlloc };
@@ -141,17 +146,18 @@ export function fifoBasis(trades) {
           const take = Math.min(unk.qty, need);
           unk.qty -= take;
           need -= take;
-          if (unk.qty <= 1e-12) unknownQ.shift();
+          if (unk.qty < 1e-12) unknownQ.shift();
         } else {
           const take = Math.min(lot.qty, need);
-          // shrink at rounded cents so the remainder stays a cent atom for
-          // the eventual closing row — a raw proportional subtraction would
-          // leave a fractional-cost lot behind (statement cells are cents)
-          const cost = take >= lot.qty - 1e-12 ? lot.costUsd : Math.min(cents((take / lot.qty) * lot.costUsd), lot.costUsd);
+          // shrink at rounded cents (the remainder stays a cent atom for the
+          // eventual closing row); full-closure is RELATIVE and the drop is
+          // strict, mirroring consumeOldest: a lot of a few 12-decimals
+          // atoms must not lose its remainder to an absolute epsilon
+          const cost = take >= lot.qty * (1 - 1e-9) ? lot.costUsd : Math.min(cents((take / lot.qty) * lot.costUsd), lot.costUsd);
           lot.qty -= take;
           lot.costUsd -= cost;
           need -= take;
-          if (lot.qty <= 1e-12) lots.shift();
+          if (lot.qty < 1e-12) lots.shift();
         }
       }
       continue;

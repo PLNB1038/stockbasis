@@ -45,24 +45,24 @@ function referenceFifo(events) {
           budget.alloc += proceeds;
           if (Number.isFinite(px) && px > 0) assumed += atom(proceeds - take * px);
         }
-        if (u[0] <= 1e-12) unknown.shift();
+        if (u[0] < 1e-12) unknown.shift();
       } else {
         const take = Math.min(k[0], need);
         if (t == null) {
           // withdrawals shrink lots at rounded cents (the engine keeps the
           // remainder a cent atom for the eventual closing row)
-          const cost = take >= k[0] - 1e-12 ? k[1] : Math.min(atom((take / k[0]) * k[1]), k[1]);
+          const cost = k[0] - take < k[0] * 1e-9 ? k[1] : Math.min(atom((take / k[0]) * k[1]), k[1]);
           k[0] -= take; k[1] -= cost; need -= take;
         } else {
           budget.taken += take;
-          const cost = take >= k[0] - 1e-12 ? k[1] : Math.min(atom((take / k[0]) * k[1]), k[1]);
+          const cost = k[0] - take < k[0] * 1e-9 ? k[1] : Math.min(atom((take / k[0]) * k[1]), k[1]);
           const proceeds = atom((t.valueUsd * budget.taken) / t.qty) - budget.alloc;
           budget.alloc += proceeds;
           const pnl = atom(proceeds - cost);
           realized += pnl; assumed += pnl;
           k[0] -= take; k[1] -= cost; need -= take;
         }
-        if (k[0] <= 1e-12) known.shift();
+        if (k[0] < 1e-12) known.shift();
       }
     }
     return need;

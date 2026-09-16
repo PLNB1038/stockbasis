@@ -147,10 +147,13 @@ export function applySanityGate(trades, prices, now) {
       corrected++;
     } else {
       // old: spot says nothing about the historical price — book the movement
-      // without P&L instead of pretending it never happened (phantom lots)
+      // without P&L instead of pretending it never happened (phantom lots).
+      // A movement has no proceeds to understate: the partial-cash disclosure
+      // must not outlive the trade it described
       t.side = t.side === "sell" ? "out" : "in";
       t.valueUsd = 0;
       delete t.priceCorrected;
+      delete t.partialCash;
       ambiguous++;
     }
   }

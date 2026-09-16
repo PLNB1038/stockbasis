@@ -65,14 +65,20 @@ export function rpcEndpoints(opts = {}) {
  *   URL that produced the returned answer, for cross-endpoint verification.
  * @returns {Promise<any>} result field of the response
  */
-let rpcQueue = Promise.resolve();
+// serialize PER ENDPOINT: each mirror keeps its own chain so its pacing slot
+// is honored, but one slow mirror must not stall calls addressed to a healthy
+// one. A single global chain made every concurrent scan queue head-to-tail
+// behind the slowest request in the system (precompute and jury traffic
+// included) while the rate limiter itself was already per-mirror.
+const rpcChains = new Map(); // url -> tail of that endpoint's serialized chain
+const enqueueRpc = (url, fn) => {
+  const run = (rpcChains.get(url) ?? Promise.resolve()).then(fn, fn);
+  rpcChains.set(url, run.catch(() => {}));
+  return run;
+};
 
 export function rpc(method, params, opts = {}) {
-  // serialize: every call reserves the next pacing slot, so concurrent
-  // callers cannot burst past the rate limit
-  const run = rpcQueue.then(() => rpcInner(method, params, opts));
-  rpcQueue = run.catch(() => {});
-  return run;
+  return rpcInner(method, params, opts);
 }
 
 async function rpcInner(method, params, opts = {}) {
@@ -90,17 +96,19 @@ async function rpcInner(method, params, opts = {}) {
   for (let attempt = 0; ; attempt++) {
     if (signal?.aborted) throw new Error(`RPC ${method}: aborted`);
     const url = urls[endpointIdx % urls.length];
-    // pace per endpoint: a background scan hammering public mirrors must not
-    // eat the pacing budget of an interactive call to a different mirror
-    const wait = (lastCallByUrl.get(url) ?? 0) + MIN_INTERVAL_MS - Date.now();
-    if (wait > 0) await sleep(wait);
-    lastCallByUrl.set(url, Date.now());
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
+    // the fetch (and its per-endpoint pacing wait) runs inside that endpoint's
+    // chain: concurrent callers to the same mirror stay paced and ordered,
+    // while callers to a different mirror proceed in parallel
+    const res = await enqueueRpc(url, async () => {
+      const wait = (lastCallByUrl.get(url) ?? 0) + MIN_INTERVAL_MS - Date.now();
+      if (wait > 0) await sleep(wait);
+      lastCallByUrl.set(url, Date.now());
+      return fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
+      });
     });
 
     if (res.status === 429 || res.status >= 500) {
@@ -177,6 +185,11 @@ async function rpcInner(method, params, opts = {}) {
  */
 export async function* allSignatures(address, opts = {}) {
   let before = opts.before;
+  // dedupe by signature: a mirror serving overlapping pages (an inclusive
+  // before, or the next page answered by a different mirror after rotation)
+  // must not double-yield a boundary signature — the caller books each tx
+  // exactly once, and a duplicate would silently double every trade in it
+  const seen = new Set();
   for (;;) {
     const params = [address, { limit: 1000 }];
     if (before) params[1].before = before;
@@ -200,6 +213,8 @@ export async function* allSignatures(address, opts = {}) {
     const next = batch[batch.length - 1].signature;
     if (next === before) return;
     for (const s of batch) {
+      if (seen.has(s.signature)) continue;
+      seen.add(s.signature);
       yield { signature: s.signature, slot: s.slot, blockTime: s.blockTime, err: s.err };
     }
     before = next;
