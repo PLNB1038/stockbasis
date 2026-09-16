@@ -193,7 +193,10 @@ async function fetchTx(s, opts = {}) {
   // a silently incomplete report is worse than an honest "try again"
   for (let attempt = 0; ; attempt++) {
     try {
-      return await rpc("getTransaction", [s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }], opts);
+      // maxSupportedTransactionVersion 1: version-0 covers ALT messages, but
+      // 2026 mints version-1 transactions too, and a 0 here makes the whole
+      // scan die with -32015 the moment the window touches one
+      return await rpc("getTransaction", [s.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 1 }], opts);
     } catch (e) {
       if (e instanceof RpcError && e.code === -32020) return null;
       if (attempt >= 1) throw e;
