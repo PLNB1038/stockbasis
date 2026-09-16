@@ -360,6 +360,27 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
     return solPrice;
   };
 
+  // The native tail is priced only from SOL the wallet economically paid for
+  // this stock. Two same-tx facts disprove that and must degenerate the tail:
+  // (a) an opposite-sign WSOL delta is the wrapped side of the same money
+  // (wrap: −SOL +WSOL) — netting it out stops a custody deposit that wraps
+  // SOL in passing from booking a phantom purchase with invented basis;
+  // (b) token deltas we could not classify (an unrelated swap leg) mean the
+  // SOL flow cannot be attributed to this equity — pricing the tail would
+  // launder that other leg's payment into our basis.
+  const wsolNet = net.get(WSOL) ?? 0;
+  const hasUnknownLegs = [...net.keys()].some((m) => m !== WSOL && !STABLES.has(m) && !metas.get(m)?.isStock);
+  const econSolTail = (equityDelta) => {
+    const sol = ctx.solDelta ?? 0;
+    if (sol === 0 || Math.sign(sol) === Math.sign(equityDelta)) return 0;
+    if (hasUnknownLegs) return 0;
+    let eff = Math.abs(sol);
+    if (wsolNet !== 0 && Math.sign(wsolNet) === -Math.sign(sol)) {
+      eff = Math.max(0, eff - Math.abs(wsolNet) * 1e9);
+    }
+    return Math.max(0, eff - (ctx.closedAta ?? 0) * RENT_PER_CLOSED_ATA);
+  };
+
   for (const e of equity) {
     // every opposite-sign cash leg of the same tx participates in the trade
     const legs = cash.filter((c) => Math.sign(c.delta) !== Math.sign(e.delta));
@@ -371,11 +392,9 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
       // same transaction: the wallet's SOL balance shows the money moving.
       // Rent reclaims and fee dust sit below the leg floor — a gift plus a
       // closed empty ATA must not book a micro-"sale"; rent refunded for
-      // closed accounts is clipped off before the floor is applied.
-      const sol = ctx.solDelta ?? 0;
-      const netSol = sol !== 0 && Math.sign(sol) !== Math.sign(e.delta)
-        ? Math.abs(sol) - (ctx.closedAta ?? 0) * RENT_PER_CLOSED_ATA
-        : 0;
+      // closed accounts is clipped off before the floor is applied. A wrap
+      // netted to zero (econSolTail) or unattributable SOL leaves a movement.
+      const netSol = econSolTail(e.delta);
       if (netSol >= MIN_SOL_LEG * 1e9) {
         const price = await ensureSolPrice();
         if (Number.isFinite(price)) {
@@ -417,13 +436,11 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
     // temporary WSOL account unwrapped inside the tx never shows up in the
     // token balances, only in solDelta — that native side is cash of the SAME
     // trade, priced on top of the stable legs, never dropped. Rent refunded
-    // for closed token accounts rides the same delta and is not proceeds.
-    const sol = ctx.solDelta ?? 0;
+    // for closed token accounts rides the same delta and is not proceeds;
+    // a wrapped or unattributable SOL flow (econSolTail) prices nothing.
+    const tail = econSolTail(e.delta);
     let solTail = 0; // lamports of the native tail that are real cash, not rent
-    if (sol !== 0 && Math.sign(sol) !== Math.sign(e.delta)) {
-      const net = Math.abs(sol) - (ctx.closedAta ?? 0) * RENT_PER_CLOSED_ATA;
-      if (net >= MIN_SOL_LEG * 1e9) solTail = net;
-    }
+    if (tail >= MIN_SOL_LEG * 1e9) solTail = tail;
     let tailUnpriced = false;
     if (solTail > 0) {
       const price = await ensureSolPrice();
@@ -434,7 +451,10 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
       // the priced part books the trade even when the SOL side has no price
       // source: known money (the stable legs) must never be thrown away with
       // the unknown. The unpriced tail still moved the wallet, so it lands in
-      // the ledger as a disclosed movement instead of vanishing.
+      // the ledger as a disclosed movement instead of vanishing — and the
+      // trade carries partialCash so the report can say the P&L is understated
+      // instead of letting a silently halved sale pass as fully valued
+      const cashIncomplete = unpriced.length > 0 || tailUnpriced;
       for (const c of unpriced) transfers.push({ mint: c.mint, delta: c.delta, ...ctx });
       if (tailUnpriced) transfers.push({ mint: WSOL, delta: solTail / 1e9, ...ctx });
       for (const c of legs) cash.splice(cash.indexOf(c), 1); // consumed either way
@@ -446,6 +466,7 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
         ts: ctx.ts,
         slot: ctx.slot,
         signature: ctx.signature,
+        ...(cashIncomplete ? { partialCash: true } : {}),
       });
       continue;
     }
@@ -459,6 +480,11 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
     trades.push({ side: e.delta < 0 ? "out" : "in", mint: e.mint, qty: Math.abs(e.delta), valueUsd: 0, ts: ctx.ts, slot: ctx.slot, signature: ctx.signature });
     continue;
   }
+  // cash that moved WITH the trade's own direction (a same-sign hop, e.g. a
+  // USDT leg routed through the wallet mid-route) never paired with any
+  // equity leg: the trade priced cleanly without it, but the money still
+  // moved — the ledger must not lose the record
+  for (const c of cash) transfers.push({ mint: c.mint, delta: c.delta, ...ctx });
 }
 
 /** Net SOL change of the wallet's own system account, in lamports. */

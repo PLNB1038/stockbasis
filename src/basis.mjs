@@ -61,7 +61,15 @@ export function fifoBasis(trades) {
   // Line items are rounded to cents AT CREATION and the totals sum those
   // atoms: a statement whose rows, CSV cells and grand total each round
   // independently cannot be reconciled against itself by an accountant.
-  const consumeOldest = (need, perUnit, t) => {
+  const consumeOldest = (need, t) => {
+    // proceeds are allocated from the trade's own cash by largest remainder:
+    // each row is the rounded running total of t.valueUsd, so the rows always
+    // sum to exactly cents(t.valueUsd) — an accountant reconciles a statement
+    // against the chain's cash, not against itself. Rounding each row from
+    // perUnit independently drifts (500 equal lots on one sale: dollars on a
+    // grid-trader pattern).
+    let takenTotal = 0;
+    let proceedsAlloc = 0;
     while (need >= 1e-12) {
       const lot = lots[0];
       const unk = unknownQ[0];
@@ -70,7 +78,9 @@ export function fifoBasis(trades) {
       if (lotTs === Infinity && unkTs === Infinity) break;
       if (unkTs <= lotTs) {
         const take = Math.min(unk.qty, need);
-        const proceeds = cents(take * perUnit);
+        takenTotal += take;
+        const proceeds = cents((t.valueUsd * takenTotal) / t.qty) - proceedsAlloc;
+        proceedsAlloc += proceeds;
         unknownBasis.push({ soldTs: t.ts, qty: take, proceedsUsd: proceeds, pnlAssumedUsd: assumable(t) ? cents(proceeds - take * t.marketPx) : null });
         if (assumable(t)) {
           realizedAssumed += cents(proceeds - take * t.marketPx);
@@ -80,10 +90,20 @@ export function fifoBasis(trades) {
         if (unk.qty <= 1e-12) unknownQ.shift();
       } else {
         const take = Math.min(lot.qty, need);
-        const cost = cents((take / lot.qty) * lot.costUsd);
-        const proceeds = cents(take * perUnit);
-        realizedUsd += proceeds - cost;
-        realizedAssumed += proceeds - cost; // assumed variant includes all known-basis P&L
+        takenTotal += take;
+        const proceeds = cents((t.valueUsd * takenTotal) / t.qty) - proceedsAlloc;
+        proceedsAlloc += proceeds;
+        // cost: a full closure consumes the lot's exact remainder (rounding
+        // tails settle in the last row); a partial take rounds with a clamp —
+        // float noise in take/lot.qty must never leave a negative-cost lot
+        const cost = take >= lot.qty - 1e-12
+          ? lot.costUsd
+          : Math.min(cents((take / lot.qty) * lot.costUsd), lot.costUsd);
+        // totals accumulate the same atoms the rows print — a raw float
+        // difference would drift the grand total away from its own CSV
+        const pnl = cents(proceeds - cost);
+        realizedUsd += pnl;
+        realizedAssumed += pnl; // assumed variant includes all known-basis P&L
         realizedBuyUsd += cost;
         closes.push({ acquiredTs: lot.ts, soldTs: t.ts, qty: take, costUsd: cost, proceedsUsd: proceeds, pnlUsd: cents(proceeds - cost) });
         lot.qty -= take;
@@ -92,15 +112,18 @@ export function fifoBasis(trades) {
         if (lot.qty <= 1e-12) lots.shift();
       }
     }
-    return need;
+    return { need, taken: takenTotal, alloc: proceedsAlloc };
   };
 
   for (const t of sorted) {
     if (t.side === "buy") {
       // degenerate input never books a poison lot: a NaN/<=0 quantity or
-      // non-finite value would corrupt every later close silently
+      // non-finite value would corrupt every later close silently. Lot cost
+      // is a cent atom from birth: rows, remainders and the CSV then stay in
+      // exact cents for the lot's whole life (at most half a cent of the raw
+      // buy value is absorbed at creation)
       if (!(t.qty > 0) || !Number.isFinite(t.valueUsd)) continue;
-      lots.push({ qty: t.qty, costUsd: t.valueUsd, ts: t.ts });
+      lots.push({ qty: t.qty, costUsd: cents(t.valueUsd), ts: t.ts });
       continue;
     }
 
@@ -121,7 +144,10 @@ export function fifoBasis(trades) {
           if (unk.qty <= 1e-12) unknownQ.shift();
         } else {
           const take = Math.min(lot.qty, need);
-          const cost = (take / lot.qty) * lot.costUsd;
+          // shrink at rounded cents so the remainder stays a cent atom for
+          // the eventual closing row — a raw proportional subtraction would
+          // leave a fractional-cost lot behind (statement cells are cents)
+          const cost = take >= lot.qty - 1e-12 ? lot.costUsd : Math.min(cents((take / lot.qty) * lot.costUsd), lot.costUsd);
           lot.qty -= take;
           lot.costUsd -= cost;
           need -= take;
@@ -141,9 +167,11 @@ export function fifoBasis(trades) {
     // deposits book unknown-basis disposals). The epsilon is inclusive: the
     // smallest unit of a 12-decimals mint is exactly 1e-12 and must survive.
     if (!(t.qty > 0) || !Number.isFinite(t.valueUsd)) continue; // degenerate, never book NaN
-    const need = consumeOldest(t.qty, t.valueUsd / t.qty, t);
+    const { need, taken, alloc } = consumeOldest(t.qty, t);
     if (need >= 1e-12) {
-      const proceeds = cents(need * (t.valueUsd / t.qty));
+      // the residue keeps sharing the sale's own cent budget, so even an
+      // oversell's rows sum to exactly cents(t.valueUsd) of covered inventory
+      const proceeds = cents((t.valueUsd * (taken + need)) / t.qty) - alloc;
       unknownBasis.push({ soldTs: t.ts, qty: need, proceedsUsd: proceeds, pnlAssumedUsd: assumable(t) ? cents(proceeds - need * t.marketPx) : null });
       if (assumable(t)) {
         realizedAssumed += cents(proceeds - need * t.marketPx);

@@ -55,6 +55,9 @@ export async function buildReport(trades, { signal } = {}) {
     // but the cash cannot be split across legs — disclosed, never guessed
     aggregatedDisposals: trades.filter((t) => t.aggregated && t.side === "out").length,
     priceCorrections: trades.filter((t) => t.priceCorrected).length,
+    // trades valued on their stable leg only (SOL price unavailable at scan
+    // time): proceeds and P&L are understated — disclosed, never guessed
+    partialCash: trades.filter((t) => t.partialCash).length,
     tokens: rows.length,
   };
 }

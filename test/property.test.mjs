@@ -25,9 +25,12 @@ function referenceFifo(events) {
   let realized = 0, assumed = 0, unknownSold = 0;
   const atom = (x) => Math.round(x * 100) / 100;
 
-  // consume `need` units from whichever inventory is older; perUnit == null
-  // is a withdrawal: lots shrink at raw proportional cost, nothing is booked
-  function consume(need, perUnit, px) {
+  // consume `need` units from whichever inventory is older; t == null
+  // is a withdrawal: lots shrink at raw proportional cost, nothing is booked.
+  // Sales allocate proceeds from the trade's own cash by largest remainder
+  // (each row = rounded running total) and lots are cent atoms from birth,
+  // mirroring the engine's reconciliation-with-the-chain contract
+  function consume(need, t, px, budget) {
     while (need > 1e-12) {
       const k = known[0], u = unknown[0];
       const kTs = k ? k[2] : Infinity, uTs = u ? u[1] : Infinity;
@@ -35,20 +38,26 @@ function referenceFifo(events) {
       if (uTs <= kTs) {
         const take = Math.min(u[0], need);
         u[0] -= take; need -= take;
-        if (perUnit != null) {
+        if (t != null) {
           unknownSold += take;
-          const proceeds = atom(take * perUnit);
+          budget.taken += take;
+          const proceeds = atom((t.valueUsd * budget.taken) / t.qty) - budget.alloc;
+          budget.alloc += proceeds;
           if (Number.isFinite(px) && px > 0) assumed += atom(proceeds - take * px);
         }
         if (u[0] <= 1e-12) unknown.shift();
       } else {
         const take = Math.min(k[0], need);
-        if (perUnit == null) {
-          const cost = (take / k[0]) * k[1]; // proportional — computed before qty changes
+        if (t == null) {
+          // withdrawals shrink lots at rounded cents (the engine keeps the
+          // remainder a cent atom for the eventual closing row)
+          const cost = take >= k[0] - 1e-12 ? k[1] : Math.min(atom((take / k[0]) * k[1]), k[1]);
           k[0] -= take; k[1] -= cost; need -= take;
         } else {
-          const cost = atom((take / k[0]) * k[1]);
-          const proceeds = atom(take * perUnit);
+          budget.taken += take;
+          const cost = take >= k[0] - 1e-12 ? k[1] : Math.min(atom((take / k[0]) * k[1]), k[1]);
+          const proceeds = atom((t.valueUsd * budget.taken) / t.qty) - budget.alloc;
+          budget.alloc += proceeds;
           const pnl = atom(proceeds - cost);
           realized += pnl; assumed += pnl;
           k[0] -= take; k[1] -= cost; need -= take;
@@ -60,14 +69,16 @@ function referenceFifo(events) {
   }
 
   for (const e of sorted) {
-    if (e.side === "buy") { known.push([e.qty, e.valueUsd, e.ts]); continue; }
+    if (e.side === "buy") { known.push([e.qty, atom(e.valueUsd), e.ts]); continue; }
     if (e.side === "in") { unknown.push([e.qty, e.ts]); continue; }
-    if (e.side === "out") { consume(e.qty, null, NaN); continue; }
-    // sell: residue beyond any tracked inventory is an unknown-basis disposal
-    const residue = consume(e.qty, e.valueUsd / e.qty, e.marketPx);
+    if (e.side === "out") { consume(e.qty, null, NaN, { taken: 0, alloc: 0 }); continue; }
+    // sell: consume inventory oldest-first; the residue beyond tracked
+    // inventory is an unknown-basis disposal sharing the same cent budget
+    const budget = { taken: 0, alloc: 0 };
+    const residue = consume(e.qty, e, e.marketPx, budget);
     if (residue > 1e-12) {
       unknownSold += residue;
-      const proceeds = atom(residue * (e.valueUsd / e.qty));
+      const proceeds = atom((e.valueUsd * (budget.taken + residue)) / e.qty) - budget.alloc;
       if (Number.isFinite(e.marketPx) && e.marketPx > 0) assumed += atom(proceeds - residue * e.marketPx);
     }
   }
