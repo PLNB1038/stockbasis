@@ -70,16 +70,15 @@ async function precomputeFeatured() {
   precomputeBusy = true;
   try {
     const fresh = new Map();
+    console.error(`[stockbasis] precompute round start: ${featuredAddresses.length} wallets`);
     for (const address of featuredAddresses) {
       try {
-        // landing-page wallets get the deep scan: no UI is waiting on them,
-        // and full history means real cost basis instead of "unknown" rows.
-        // PRECOMPUTE_RPC can point the background scans at unmetered mirrors
-        // so rate-limited/paid endpoints stay reserved for interactive scans.
+        console.error(`[stockbasis] precompute ${address.slice(0, 8)} ingest start`);
         const { trades, coverage, ambiguous, classifyFailed, transfers: tfs } = await ingestWallet(address, {
           rpcUrl: process.env.PRECOMPUTE_RPC,
           maxScanTx: 8000, targetStockTrades: 300, timeBudgetS: 900,
         });
+        console.error(`[stockbasis] precompute ${address.slice(0, 8)} ingest done: ${trades.length} trades, scanned ${coverage?.scanned ?? "?"}`);
         if (!trades.length) continue; // dead wallet: keep the previous good snapshot instead of an empty report
         // the balance calls of the reconciliation ride the same unmetered
         // mirror as the scan itself — leaving rpcUrl unset would drop every
