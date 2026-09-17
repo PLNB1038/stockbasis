@@ -86,6 +86,7 @@ async function precomputeFeatured() {
         // endpoint the comment above just promised to spare
         const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades, { rpcUrl: process.env.PRECOMPUTE_RPC });
         fresh.set(address, { ...report, reconciled, reconcileFailed, classifyFailed, coverage, ambiguous, transfersCount: tfs.length });
+        console.error(`[stockbasis] precompute ${address.slice(0, 8)} cached (reconciled: ${reconciled}, failed: ${reconcileFailed})`);
       } catch (e) {
         // String() first: a broken featured entry (address undefined) must
         // not turn the error handler itself into a TypeError that kills the
@@ -97,6 +98,7 @@ async function precomputeFeatured() {
     for (const [addr, prev] of precomputed) if (!fresh.has(addr)) fresh.set(addr, prev);
     precomputed.clear();
     for (const [k, v] of fresh) precomputed.set(k, v);
+    console.error(`[stockbasis] precompute round complete: ${precomputed.size} cached`);
   } finally {
     precomputeBusy = false;
   }
