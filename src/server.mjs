@@ -182,8 +182,17 @@ function startJob(address) {
   return job;
 }
 
+// one journal line per request is the whole access log: funnel terminates TLS
+// upstream, so the app only ever sees a loopback peer and there is no client
+// IP to record. UA and XFF are attacker-controlled strings — control chars
+// would forge journal entries and an unbounded header could flood them, so
+// both are stripped and capped before they reach the log
+const sane = (h) => String(h ?? "").replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 120);
+
 const server = http.createServer(async (req, res) => {
   try {
+  const xff = req.headers["x-forwarded-for"];
+  console.log(`[stockbasis] ${req.method} ${sane(req.url)} ua="${sane(req.headers["user-agent"])}"${xff ? ` xff="${sane(xff)}"` : ""}`);
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (req.method === "POST" && url.pathname === "/api/jobs") {

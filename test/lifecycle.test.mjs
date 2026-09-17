@@ -226,3 +226,36 @@ test("stats: one upstream call per burst; an empty strip recovers quickly, not a
     child.kill("SIGKILL");
   }
 });
+
+test("access log: every request journals one line, hostile headers cannot flood it", async () => {
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  const base = `http://127.0.0.1:${port}`;
+  const child = spawn(process.execPath, [path.join("test", "fixtures", "stats-child.mjs")], {
+    cwd: ROOT,
+    env: { ...process.env, PORT: String(port), SB_FIXTURE_SPAWNED: "1" },
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  let out = "";
+  child.stdout.on("data", (c) => (out += c));
+  for (let i = 0; i < 60; i++) {
+    try { if ((await fetch(base + "/")).ok) break; } catch { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  // control chars cannot reach the handler at all (llhttp rejects them before
+  // the value lands in req.headers — the strip in sane() is defense-in-depth),
+  // so the observable contract is the length cap and one line per request
+  const hostile = "evil/1.0 " + "A".repeat(200);
+  try {
+    const r = await fetch(base + "/api/stats", { headers: { "user-agent": hostile, "x-forwarded-for": hostile } });
+    assert.ok(r.ok);
+    await new Promise((r) => setTimeout(r, 200));
+    const access = out.split("\n").filter((l) => l.startsWith(`[stockbasis] GET /api/stats ua=`));
+    assert.equal(access.length, 1, "exactly one access line per request");
+    const ua = access[0].match(/ua="([^"]*)"/)[1];
+    assert.equal(ua.length, 120, "the UA is capped at 120 chars");
+    const xff = access[0].match(/ xff="([^"]*)"/);
+    assert.ok(xff && xff[1].length === 120, "XFF is journaled under the same cap");
+  } finally {
+    child.kill("SIGKILL");
+  }
+});
