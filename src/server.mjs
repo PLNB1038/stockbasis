@@ -116,7 +116,12 @@ async function loadFeatured() {
       featuredAddresses.push(f.address);
     }
     precomputeFeatured();
-    setInterval(precomputeFeatured, 60 * 60 * 1000).unref();
+    // hourly deep scans of every featured wallet can push a public RPC bucket
+    // into a permanent 429 storm: the rounds then crawl inside backoff sleeps,
+    // burn their whole budget and cache nothing — silently. PRECOMPUTE_INTERVAL_MIN
+    // spaces rounds far enough apart for unmetered mirrors to cool down.
+    const intervalMin = Number(process.env.PRECOMPUTE_INTERVAL_MIN) > 0 ? Number(process.env.PRECOMPUTE_INTERVAL_MIN) : 60;
+    setInterval(precomputeFeatured, intervalMin * 60 * 1000).unref();
   } catch (e) {
     // a silent catch here reads as "no featured wallets" forever: the strip
     // keeps serving (it re-reads the file per request) while every hourly
