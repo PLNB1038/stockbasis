@@ -118,7 +118,11 @@ async function loadFeatured() {
     }
     precomputeFeatured();
     setInterval(precomputeFeatured, 60 * 60 * 1000).unref();
-  } catch {
+  } catch (e) {
+    // a silent catch here reads as "no featured wallets" forever: the strip
+    // keeps serving (it re-reads the file per request) while every hourly
+    // precompute round quietly iterates an empty list
+    console.error(`[stockbasis] featured load failed: ${String(e?.message ?? e).slice(0, 120)}`);
     featuredAddresses = [];
   }
 }
