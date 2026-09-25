@@ -10,7 +10,12 @@ const SEARCH_URL = process.env.JUP_SEARCH_URL ?? "https://lite-api.jup.ag/tokens
 const curated = (() => {
   try {
     return JSON.parse(readFileSync(new URL("../data/stocks.json", import.meta.url), "utf8"));
-  } catch {
+  } catch (e) {
+    // a broken curated file must be as loud as a broken featured.json (the
+    // strip re-reads per request and flags itself): a silent {} here reads as
+    // "no curated stocks" to every lookup, un-Stocking the whole curated
+    // universe exactly when the Jupiter fallback lags too
+    console.error(`[stockbasis] curated universe load failed: ${String(e?.message ?? e).slice(0, 120)}`);
     return {};
   }
 })();
@@ -37,6 +42,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // bidi/zero-width format characters at the source — a spoofed symbol must
 // not render indistinguishably from a real ticker next to real money
 const clean = (s) => String(s ?? "").replace(/[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "");
+// and length: symbol/name come from the issuer of the mint, so a hostile one
+// can park megabytes in the cache through a single visitor's scan
+const fit = (s, n) => clean(s).slice(0, n);
+
+const MAX_TOKEN_CACHE = 1024;
+// insertion-order eviction keeps the map bounded: a displaced entry only
+// costs a re-lookup later (curated answers re-hit instantly), correctness is
+// untouched — only the unbounded memory of immortal positives is
+function remember(mint, entry) {
+  if (cache.size >= MAX_TOKEN_CACHE) cache.delete(cache.keys().next().value);
+  cache.set(mint, entry);
+}
 
 /**
  * Look up token metadata and stock classification for a mint.
@@ -62,8 +79,8 @@ export async function lookupToken(mint, { signal } = {}) {
   }
 
   if (curated[mint]) {
-    const out = { symbol: clean(curated[mint].symbol), name: clean(curated[mint].name), isStock: true, tags: ["curated"] };
-    cache.set(mint, out);
+    const out = { symbol: fit(curated[mint].symbol, 64), name: fit(curated[mint].name, 128), isStock: true, tags: ["curated"] };
+    remember(mint, out);
     return out;
   }
 
@@ -83,13 +100,13 @@ export async function lookupToken(mint, { signal } = {}) {
     const t = (Array.isArray(items) ? items.find((x) => x.id === mint) : undefined) ?? null;
     if (t) {
       const tags = t.tags ?? [];
-      out = { symbol: clean(t.symbol ?? "?"), name: clean(t.name ?? ""), isStock: tags.some((x) => STOCK_TAGS.has(x)), tags };
+      out = { symbol: fit(t.symbol ?? "?", 64), name: fit(t.name ?? "", 128), isStock: tags.some((x) => STOCK_TAGS.has(x)), tags };
     }
     break;
   }
   // answers that carry tags are immutable; a tagless one is only as durable
   // as its short TTL (tags may be indexed any moment), and no-data as its own
-  cache.set(mint,
+  remember(mint,
     out === null ? { isNull: true, nullUntil: Date.now() + NULL_TTL_MS }
     : out.tags.length === 0 ? { ...out, unconfirmedUntil: Date.now() + TAGLESS_TTL_MS }
     : out);
@@ -97,9 +114,14 @@ export async function lookupToken(mint, { signal } = {}) {
   return out;
 }
 
+/** Test hook: the bounded-cache invariant is observable without network. */
+export function tokenCacheSize() {
+  return cache.size;
+}
+
 /** Test hook: seed the cache so fixture tests never touch the network. */
 export function primeTokenCache(mint, meta) {
-  cache.set(mint, { ...meta, symbol: clean(meta?.symbol), name: clean(meta?.name) });
+  remember(mint, { ...meta, symbol: fit(meta?.symbol, 64), name: fit(meta?.name, 128) });
 }
 
 /** Stablecoins we treat as the cash leg of a trade (mint addresses verified on-chain). */

@@ -114,7 +114,10 @@ export const envInt = (v, dflt) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : dflt;
 };
-const TX_CONCURRENCY = envInt(process.env.INGEST_CONCURRENCY, 5);
+// clamp at 1: a zero (0 is finite, the gate above passes it) makes the walk
+// loop `i += 0` on microtasks — every timer and accept starves and the whole
+// process turns into a 100%-CPU zombie with no honest error anywhere
+const TX_CONCURRENCY = Math.max(1, envInt(process.env.INGEST_CONCURRENCY, 5));
 
 /**
  * Aggregator routes make cash-leg pairing ambiguous. Trades whose implied

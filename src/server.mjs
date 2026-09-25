@@ -102,8 +102,11 @@ async function precomputeFeatured() {
         console.error(`[stockbasis] precompute ${String(address).slice(0, 8)} failed: ${String(e?.message ?? e).slice(0, 80)}`);
       }
     }
-    // stale-but-good beats fresh-and-empty: only replace entries that rescanned
-    for (const [addr, prev] of precomputed) if (!fresh.has(addr)) fresh.set(addr, prev);
+    // stale-but-good beats fresh-and-empty: only replace entries that rescanned.
+    // Membership is the other half of that rule: a wallet an operator REMOVED
+    // from featured.json must leave the map with the list, not stay as a
+    // frozen forever-report served to every future POST
+    for (const [addr, prev] of precomputed) if (!fresh.has(addr) && featuredAddresses.includes(addr)) fresh.set(addr, prev);
     precomputed.clear();
     for (const [k, v] of fresh) precomputed.set(k, v);
     console.error(`[stockbasis] precompute round complete: ${precomputed.size} cached`);
@@ -299,10 +302,16 @@ const server = http.createServer(async (req, res) => {
     // itself into a "valid" string and an object with toString:null threw a
     // TypeError that destroyed the socket with no HTTP answer at all
     if (typeof address !== "string" || !ADDRESS_RE.test(address)) return json(res, 400, { error: "valid Solana address required" });
-    const runningNow = [...jobs.values()].filter((j) => j.status === "running").length;
-    if (runningNow >= 20) return json(res, 503, { error: "server busy, try again shortly" });
-    evictFinishedJobs();
-    if (jobs.size >= MAX_JOBS) return json(res, 503, { error: "server busy, try again shortly" });
+    // a duplicate of an already-running scan joins that job (zero new load),
+    // so the busy caps below must not reject it: at a full 20-running board
+    // the join used to answer a lying "server busy" about work already underway
+    const dupRunning = [...jobs.values()].some((j) => j.address === address && j.status === "running");
+    if (!dupRunning) {
+      const runningNow = [...jobs.values()].filter((j) => j.status === "running").length;
+      if (runningNow >= 20) return json(res, 503, { error: "server busy, try again shortly" });
+      evictFinishedJobs();
+      if (jobs.size >= MAX_JOBS) return json(res, 503, { error: "server busy, try again shortly" });
+    }
     const job = startJob(address);
     return json(res, 202, { id: job.id, target: TARGET_TRADES });
   }
@@ -389,6 +398,10 @@ async function computeMarketStats() {
   // response socket (the read sits outside the network try below)
   let stocks = {};
   try { stocks = JSON.parse(await readFile(path.join(dataDir, "stocks.json"), "utf8")); } catch { /* empty strip */ }
+  // JSON.parse accepts "null" and arrays without blinking, and Object.keys on
+  // either throws below the try — killing /api/stats for every future request
+  // with a destroyed socket and no log line
+  if (!stocks || typeof stocks !== "object" || Array.isArray(stocks)) stocks = {};
   const mints = Object.keys(stocks);
   const out = { volume24hUsd: 0, trackedTokens: mints.length, tokensWithPools: 0, top: [] };
 

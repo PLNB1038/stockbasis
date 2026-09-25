@@ -174,6 +174,18 @@ async function rpcInner(method, params, opts = {}) {
         }
         throw new RpcError(method, body.error);
       }
+      // -32602 "invalid params" is permanent only about the MIRROR that said
+      // it: a legacy provider that does not know maxSupportedTransactionVersion
+      // rejects the very request a modern sibling serves fine. Rotate through
+      // unasked mirrors before declaring the request itself unsendable
+      if (body.error.code === -32602) {
+        holes.add(url);
+        if (holes.size < urls.length && holeSkips++ < urls.length * 3) {
+          advance();
+          continue;
+        }
+        throw new RpcError(method, body.error); // every mirror rejects the params — genuinely our request's fault
+      }
       // request-class errors are permanent — fail now, not after six retries
       if (PERMANENT_RPC_CODES.has(body.error.code)) throw new RpcError(method, body.error);
       // other RPC-level errors can be transient (node behind a load balancer)
@@ -221,14 +233,39 @@ export async function* allSignatures(address, opts = {}) {
     if (before) params[1].before = before;
     if (opts.until) params[1].until = opts.until;
 
+    let answeredBy; // the mirror behind this page — excluded from its own cross-check
     let batch;
     try {
-      batch = await rpc("getSignaturesForAddress", params, opts);
+      batch = await rpc("getSignaturesForAddress", params, { ...opts, onEndpoint: (u) => { answeredBy = u; } });
     } catch (e) {
       if (e instanceof RpcError && e.code === -32020) return; // history ends at this node's depth — fine
       throw e;
     }
-    if (!batch?.length) return;
+    if (!Array.isArray(batch) || !batch.length) {
+      // a mirror's word for "history ends here" — an empty page, or a 200-OK
+      // whose result is not even a list — is not trusted alone: one 429 can
+      // rotate this call onto a shallow mirror whose empty answer would end
+      // the walk on a silently truncated past. Demand agreement from a mirror
+      // that did not just serve this answer (the rule reconcile applies to
+      // empty balances); a single-mirror setup has nobody to ask and keeps
+      // trusting itself, exactly like reconcile
+      const { current, others } = rpcEndpoints(opts);
+      const verify = (answeredBy ? [current, ...others] : others).filter((u) => u !== answeredBy);
+      if (!verify.length) return;
+      const confirm = await rpc("getSignaturesForAddress", params, { ...opts, rpcUrl: verify.join(","), onEndpoint: () => {} }).catch(() => null);
+      if (confirm === null) {
+        // nobody could confirm the end: an unconfirmed end is a hole in the
+        // history — fail the scan honestly instead of quietly building a
+        // report on a truncated past
+        throw new Error("RPC getSignaturesForAddress: end-of-history answer could not be cross-checked");
+      }
+      if (!Array.isArray(confirm)) {
+        // a 200-OK without a real list is not agreement with "empty" either
+        throw new Error("RPC getSignaturesForAddress: cross-check answered a non-list");
+      }
+      if (!confirm.length) return; // both sides agree: the history truly ends
+      batch = confirm; // the first mirror lied about the end — keep walking with the real page
+    }
 
     // batches come newest-first; walk to the oldest of this batch, then
     // continue. A short page is NOT the end: the JSON-RPC contract is "at
