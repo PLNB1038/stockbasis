@@ -35,7 +35,7 @@ export function diffAdjustments(rows, balances) {
  * An empty 200-OK answer is confirmed on a mirror that did not serve it
  * before it is allowed to zero out a position (same rule the -32020 path
  * already follows: one mirror's hole is not a chain fact).
- * @returns {Promise<{balances: Map<string, number>, failed: number}>}
+ * @returns {Promise<{balances: Map<string, number>, failed: number, singleSource: Set<string>}>}
  */
 /** Parse a token-amount block the way ingest does: the string form first
  * (exact), the float form as fallback — and ONLY finite numbers. A null or
@@ -52,6 +52,7 @@ function amount(a) {
 
 async function walletBalances(address, mints, opts = {}) {
   const balances = new Map();
+  const singleSource = new Set(); // mints whose ZERO was trusted from one endpoint's empty answer
   let failed = 0;
   for (const mint of mints) {
     if (opts.signal?.aborted) throw new Error("balance reconciliation aborted"); // a cancelled scan stops paying for RPC
@@ -94,7 +95,10 @@ async function walletBalances(address, mints, opts = {}) {
         balances.set(mint, q);
         continue;
       }
-      // single-endpoint setup: nothing to cross-check with — trust the answer
+      // single-endpoint setup: nothing to cross-check with — trust the answer.
+      // The trust stands (documented design), but the report must say this
+      // zero rested on one mirror's word: the mint joins the singleSource set
+      singleSource.add(mint);
     }
     let q = 0;
     let ok = true;
@@ -107,7 +111,17 @@ async function walletBalances(address, mints, opts = {}) {
     if (!ok) { failed++; continue; }
     balances.set(mint, q);
   }
-  return { balances, failed };
+  return { balances, failed, singleSource };
+}
+
+/** Additive disclosure, no trust semantics changed: rows whose chain balance
+ * was trusted from ONE endpoint's empty answer carry singleSource: true, so a
+ * report consumer can tell one mirror's word from a cross-checked fact. */
+function markSingleSource(report, singleSource) {
+  if (!singleSource.size) return;
+  for (const row of report.rows) {
+    if (singleSource.has(row.mint)) row.singleSource = true;
+  }
 }
 
 /**
@@ -128,7 +142,10 @@ export async function buildReconciledReport(address, trades, { now = () => Math.
   // success just because the throw inside the loop never fired
   if (signal?.aborted) throw new Error("balance reconciliation aborted");
   const adjustments = diffAdjustments(report.rows, out.balances);
-  if (!adjustments.length) return { report, reconciled: 0, reconcileFailed: out.failed };
+  if (!adjustments.length) {
+    markSingleSource(report, out.singleSource);
+    return { report, reconciled: 0, reconcileFailed: out.failed };
+  }
 
   // synthetic movements must sort AFTER every real trade: a machine clock
   // lagging behind chain time would otherwise reorder FIFO and reprice real
@@ -145,5 +162,6 @@ export async function buildReconciledReport(address, trades, { now = () => Math.
     signature: RECONCILE_SYNTHETIC,
   }));
   const rebuilt = await buildReport([...trades, ...synthetic], { signal });
+  markSingleSource(rebuilt, out.singleSource);
   return { report: rebuilt, reconciled: adjustments.length, reconcileFailed: out.failed };
 }

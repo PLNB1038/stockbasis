@@ -58,6 +58,19 @@ export async function buildReport(trades, { signal } = {}) {
     // trades valued on their stable leg only (SOL price unavailable at scan
     // time): proceeds and P&L are understated — disclosed, never guessed
     partialCash: trades.filter((t) => t.partialCash).length,
+    // of those, the legs unpriced because the day sits outside CoinGecko's
+    // 365-day public window — a PERMANENT limit no rescan can recover, so a
+    // consumer must tell it apart from a transient scan-time outage
+    partialCashAncient: trades.filter((t) => t.partialCash && t.unpricedReason === "ancient").length,
+    // fully unpriced movements (an ancient day outside every price window):
+    // the shares still consumed FIFO lots with no proceeds and no P&L — a
+    // different disclosure channel than partialCash (which covers partially
+    // valued trades); without this counter the hole is silent
+    unpricedMovements: trades.filter((t) => t.unpricedReason && !t.partialCash).length,
+    // trades whose qty is a net of several material on-chain movements of one
+    // mint (a sale plus a custody withdrawal): proceeds divided by a qty no
+    // single fill supports — disclosed, never silent
+    nettedMixed: trades.filter((t) => t.nettedMixed).length,
     tokens: rows.length,
   };
 }

@@ -4,6 +4,19 @@ const dayCache = new Map(); // yyyy-mm-dd -> usd
 const missCache = new Map(); // yyyy-mm-dd -> Date.now() of the last failed lookup
 const MISS_TTL_MS = 5 * 60 * 1000;
 
+// CoinGecko's public history endpoint answers 401 (error_code 10012, "Public
+// API users are limited to querying historical data within the past 365
+// days") for every older date — a PERMANENT miss, unlike a 429 or an outage:
+// no TTL makes the day priceable later. Ancient days are therefore answered
+// locally — no doomed network round-trip — and callers can tell the permanent
+// cause from a transient one via isAncientDay when disclosing unpriced legs.
+const COINGECKO_HISTORY_WINDOW_DAYS = 365;
+
+/** True when `ts` (unix seconds) is older than the public history window. */
+export function isAncientDay(ts) {
+  return ts < Math.floor(Date.now() / 1000) - COINGECKO_HISTORY_WINDOW_DAYS * 86400;
+}
+
 /**
  * SOL price at a given unix timestamp (per-day resolution, cached).
  * Returns null when no history is available — the caller then books the
@@ -17,7 +30,9 @@ export async function solUsdOn(ts) {
   // 429 day burns 2 fetch timeouts + backoff on EVERY WSOL trade of that day
   const miss = missCache.get(day);
   if (miss && Date.now() - miss < MISS_TTL_MS) return null;
-  const usd = await fromCoinGeckoHistory(day);
+  // an ancient day can never gain a price: skip the network entirely and
+  // record the miss like any other failed lookup
+  const usd = isAncientDay(ts) ? null : await fromCoinGeckoHistory(day);
   if (usd != null) dayCache.set(day, usd);
   else missCache.set(day, Date.now());
   return usd; // null → caller must treat the cash leg as unpriced

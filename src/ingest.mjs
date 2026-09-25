@@ -7,7 +7,7 @@
 
 import { rpc, allSignatures, RpcError } from "./rpc.mjs";
 import { lookupToken, STABLES } from "./classify.mjs";
-import { solUsdOn } from "./price.mjs";
+import { solUsdOn, isAncientDay } from "./price.mjs";
 
 /** WSOL mint (wrapped SOL acts as the cash leg in many swaps). */
 export const WSOL = "So11111111111111111111111111111111111111112";
@@ -145,15 +145,23 @@ export function applySanityGate(trades, prices, now) {
       t.valueUsd = Math.round(t.qty * px * 100) / 100;
       t.priceCorrected = true;
       corrected++;
+      // the reprice values the WHOLE trade at market: a stale partialCash
+      // (the WSOL leg had no price at scan time) or unpricedReason must not
+      // outlive it — the report would keep claiming "P&L understated" for a
+      // trade now valued in full (same hygiene as the movement branch below)
+      delete t.partialCash;
+      delete t.unpricedReason;
     } else {
       // old: spot says nothing about the historical price — book the movement
       // without P&L instead of pretending it never happened (phantom lots).
       // A movement has no proceeds to understate: the partial-cash disclosure
-      // must not outlive the trade it described
+      // must not outlive the trade it described (and an unpricedReason would
+      // misattribute the conversion's cause — the gate, not the price feed)
       t.side = t.side === "sell" ? "out" : "in";
       t.valueUsd = 0;
       delete t.priceCorrected;
       delete t.partialCash;
+      delete t.unpricedReason;
       ambiguous++;
     }
   }
@@ -165,13 +173,34 @@ async function priceSanityGate(trades) {
   // offline test hook: skip live market lookup entirely
   if (process.env.STOCKBASIS_NO_MARKET === "1") return { corrected: 0, ambiguous: 0 };
   const mints = [...new Set(trades.map((t) => t.mint))];
-  let prices;
+  // DexScreener accepts at most 30 addresses per batch call: a scan touching
+  // more distinct stock mints (precompute targets 300 trades on big wallets)
+  // must slice the request — one over-limit call answers 400/414 and the
+  // whole gate used to silently skip on exactly the largest scans, leaving
+  // aggregator-garbage implied prices uncorrected. A failed batch degrades to
+  // "those mints unpriced" (applySanityGate skips mints without a quote and
+  // the market-basis assumption needs a quote too) instead of discarding the
+  // other batches' data; only when EVERY batch failed does the gate stand
+  // down like the old single-request path did.
+  const pairs = [];
+  let batches = 0;
+  let batchFailures = 0;
   try {
-    const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(",")}`, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return { corrected: 0, ambiguous: 0 };
-    const pairs = await res.json();
+    for (let i = 0; i < mints.length; i += 30) {
+      batches++;
+      const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.slice(i, i + 30).join(",")}`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) { batchFailures++; continue; }
+      const data = await res.json();
+      if (Array.isArray(data)) pairs.push(...data);
+    }
+  } catch {
+    batchFailures++; // network died mid-walk: use whatever batches already landed
+  }
+  if (batches && batchFailures === batches) return { corrected: 0, ambiguous: 0 }; // no market data — leave trades as paired
+  let prices;
+  {
     prices = new Map();
-    for (const p of pairs ?? []) {
+    for (const p of pairs) {
       const base = p.baseToken?.address;
       const px = Number(p.priceUsd);
       const liq = p.liquidity?.usd ?? 0;
@@ -180,8 +209,6 @@ async function priceSanityGate(trades) {
       if (!prev || liq > prev.liq) prices.set(base, { px, liq });
     }
     for (const [base, v] of prices) prices.set(base, v.px);
-  } catch {
-    return { corrected: 0, ambiguous: 0 }; // no market data — leave trades as paired
   }
   return applySanityGate(trades, prices, Date.now() / 1000);
 }
@@ -212,6 +239,14 @@ export const DUST_EPS = 1e-12;
 
 /** Net token balance changes for the wallet in one transaction. */
 export function tokenDeltas(meta, owner) {
+  // postTokenBalances without any pre side (null/undefined — NOT an empty
+  // array: an empty pre is legitimate, the token account was created in this
+  // tx) is a mirror that never read the prior state: diffing against an
+  // invented empty past turns a 10→0 sale into "nothing moved" and the trade
+  // with its realized P&L vanishes unflagged. Void the whole read like the
+  // unreadable uiAmount below does: skip, never fabricate deltas from half
+  // of a reading.
+  if (meta.postTokenBalances?.length && meta.preTokenBalances == null) return [];
   const pre = new Map(meta.preTokenBalances?.map((b) => [key(b), b]) ?? []);
   const post = meta.postTokenBalances?.map((b) => [key(b), b]) ?? [];
   const out = [];
@@ -277,6 +312,16 @@ export function tokenDeltas(meta, owner) {
  * @returns {Promise<void>}
  */
 const MIN_SOL_LEG = envInt(process.env.MIN_SOL_LEG, 0.01); // SOL: below this a delta is rent/fee dust, not a cash leg
+// A native SOL outflow riding a BUY is accepted as payment only up to
+// (SOL_TAIL_CAP - 1) of the tx's own cash-leg valuation of the shares — at
+// 1.0x, not at all: for tokenized equities a legitimate purchase paid in SOL
+// on top of stablecoin legs is rare, while a side-flow sweeping through the
+// same tx (a tip, an unrelated payment to a third party) is common and must
+// not inflate the basis — the surplus lands in transfers instead. The
+// legless path cannot use this cap: there the SOL flow IS the tx's only
+// price signal, nothing independent exists to cap against, and a
+// whole-in-SOL payment (rare but real) must keep pricing uncapped.
+const SOL_TAIL_CAP = 1.0;
 // Closing a token account refunds its rent-exempt deposit (~0.0021 SOL at
 // the historical maximum). Five closed ATAs clear the 0.01 SOL leg floor, so
 // the raw solDelta would book refund dust as sale proceeds. The constant is
@@ -301,10 +346,27 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
   // The epsilon is the shared inclusive DUST_EPS: the smallest unit of a
   // 12-decimals mint (exactly 1e-12) is a real movement, not dust.
   const net = new Map();
+  const netInputs = new Map(); // mint -> individual deltas that shaped the net
   for (const d of deltas) {
     const v = (net.get(d.mint) ?? 0) + d.delta;
     if (Math.abs(v) >= DUST_EPS) net.set(d.mint, v);
     else net.delete(d.mint);
+    const inputs = netInputs.get(d.mint);
+    if (inputs) inputs.push(d.delta);
+    else netInputs.set(d.mint, [d.delta]);
+  }
+  // a mint whose net merged several MATERIAL movements (a sale plus a custody
+  // withdrawal, or a buy-back netted into a sale) books a qty no single chain
+  // event supports — proceeds smear across it. Dust split across accounts of
+  // one mint is the benign case netting exists for and stays silent: nano, or
+  // under 1% of the dominant movement (the same immateriality idiom as the
+  // dust equity legs below). The flag rides the trade so the report can
+  // disclose the smear instead of passing it off as one clean fill.
+  const nettedMixed = new Set();
+  for (const [mint, inputs] of netInputs) {
+    if (inputs.length < 2) continue;
+    const sizes = inputs.map(Math.abs).sort((a, b) => b - a);
+    if (sizes[1] >= 1e-6 && sizes[1] >= 0.01 * sizes[0]) nettedMixed.add(mint);
   }
 
   const metas = new Map();
@@ -365,6 +427,13 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
     if (solPrice == null) solPrice = await solUsdOn(ctx.ts);
     return solPrice;
   };
+  // An unpriced cash leg on a day beyond CoinGecko's 365-day public window is
+  // a PERMANENT limit (401 / error 10012 there), not an outage: the trades it
+  // touches still route through the existing disclosure channels — unpriced
+  // legs land in transfers, partially valued trades carry partialCash (the
+  // report's "P&L understated" counter) — and carry unpricedReason:"ancient"
+  // so the cause is visible instead of reading as a transient data glitch.
+  const ancientNote = () => (isAncientDay(ctx.ts) ? { unpricedReason: "ancient" } : {});
 
   // The native tail is priced only from SOL the wallet economically paid for
   // this stock. Two same-tx facts disprove that and must degenerate the tail:
@@ -401,6 +470,7 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
       // closed accounts is clipped off before the floor is applied. A wrap
       // netted to zero (econSolTail) or unattributable SOL leaves a movement.
       const netSol = econSolTail(e.delta);
+      let legUnpriced = false; // real trade cash that no price can value today
       if (netSol >= MIN_SOL_LEG * 1e9) {
         const price = await ensureSolPrice();
         if (Number.isFinite(price)) {
@@ -412,9 +482,11 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
             ts: ctx.ts,
             slot: ctx.slot,
             signature: ctx.signature,
+            ...(nettedMixed.has(e.mint) ? { nettedMixed: true } : {}),
           });
           continue;
         }
+        legUnpriced = true;
       }
       // no cash involved: a withdrawal/deposit moves basis with the tokens.
       // Outgoing stock consumes open lots (no P&L); incoming creates none.
@@ -426,6 +498,7 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
         ts: ctx.ts,
         slot: ctx.slot,
         signature: ctx.signature,
+        ...(legUnpriced && ancientNote()),
       });
       continue;
     }
@@ -445,24 +518,44 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
     // for closed token accounts rides the same delta and is not proceeds;
     // a wrapped or unattributable SOL flow (econSolTail) prices nothing.
     const tail = econSolTail(e.delta);
-    let solTail = 0; // lamports of the native tail that are real cash, not rent
-    if (tail >= MIN_SOL_LEG * 1e9) solTail = tail;
+    let solTail = 0; // lamports of the native tail accepted as trade cash
     let tailUnpriced = false;
-    if (solTail > 0) {
+    if (tail >= MIN_SOL_LEG * 1e9) {
       const price = await ensureSolPrice();
-      if (Number.isFinite(price)) valueUsd += (solTail / 1e9) * price;
-      else tailUnpriced = true;
+      if (Number.isFinite(price)) {
+        // on a BUY the tail is payment, and payment stops where the tx's own
+        // valuation of the shares ends (SOL_TAIL_CAP); a SELL keeps the full
+        // tail — proceeds split across a stable leg and unwrapped native SOL
+        // is the aggregator shape this branch exists for, and a cap there
+        // would understate realized gains. PIN, intentional asymmetry: the
+        // sell side is UNCAPPED on purpose — split proceeds are valued fully
+        // (pinned by the round8/round68 suites); audits should not re-flag it
+        const capLamports = e.delta > 0
+          ? Math.round(((SOL_TAIL_CAP - 1) * valueUsd / price) * 1e9)
+          : tail;
+        solTail = Math.min(tail, capLamports);
+      } else {
+        tailUnpriced = true; // no price: the tail cannot be valued into the trade
+      }
     }
+    // whatever the cap or the leg floor kept out of the trade still moved the
+    // wallet: the ledger keeps the record (same rule as the same-sign hops
+    // below) instead of letting SOL vanish without a trace. econSolTail is a
+    // magnitude; the flow itself runs opposite to the equity leg, and the
+    // ledger record carries that real direction.
+    if (tail > solTail) transfers.push({ mint: WSOL, delta: (e.delta > 0 ? -1 : 1) * ((tail - solTail) / 1e9), ...ctx });
+    if (solTail > 0) valueUsd += (solTail / 1e9) * solPrice;
     if (valueUsd > 0) {
       // the priced part books the trade even when the SOL side has no price
       // source: known money (the stable legs) must never be thrown away with
-      // the unknown. The unpriced tail still moved the wallet, so it lands in
-      // the ledger as a disclosed movement instead of vanishing — and the
-      // trade carries partialCash so the report can say the P&L is understated
-      // instead of letting a silently halved sale pass as fully valued
+      // the unknown. An unpriced tail needs no second ledger record here —
+      // the tail > solTail push above already recorded it at full size with
+      // its real direction (an unpriced tail is always accepted at zero, so
+      // that push fires complete) — and the trade carries partialCash so the
+      // report can say the P&L is understated instead of letting a silently
+      // halved sale pass as fully valued
       const cashIncomplete = unpriced.length > 0 || tailUnpriced;
       for (const c of unpriced) transfers.push({ mint: c.mint, delta: c.delta, ...ctx });
-      if (tailUnpriced) transfers.push({ mint: WSOL, delta: solTail / 1e9, ...ctx });
       for (const c of legs) cash.splice(cash.indexOf(c), 1); // consumed either way
       trades.push({
         side: e.delta > 0 ? "buy" : "sell",
@@ -473,17 +566,21 @@ export async function pairTrades(deltas, ctx, trades, transfers, stats = { class
         slot: ctx.slot,
         signature: ctx.signature,
         ...(cashIncomplete ? { partialCash: true } : {}),
+        ...(cashIncomplete && ancientNote()),
+        ...(nettedMixed.has(e.mint) ? { nettedMixed: true } : {}),
       });
       continue;
     }
     // nothing priced at all: a movement without a value, never a guess —
-    // and never a disappearance: the shares still left/arrived
+    // and never a disappearance: the shares still left/arrived. Reaching this
+    // branch with legs present means at least one leg had no price (stables
+    // are self-priced), so an ancient day gets named as the cause
     for (const c of legs) {
       cash.splice(cash.indexOf(c), 1);
       transfers.push({ mint: c.mint, delta: c.delta, ...ctx });
     }
     transfers.push({ mint: e.mint, delta: e.delta, ...ctx });
-    trades.push({ side: e.delta < 0 ? "out" : "in", mint: e.mint, qty: Math.abs(e.delta), valueUsd: 0, ts: ctx.ts, slot: ctx.slot, signature: ctx.signature });
+    trades.push({ side: e.delta < 0 ? "out" : "in", mint: e.mint, qty: Math.abs(e.delta), valueUsd: 0, ts: ctx.ts, slot: ctx.slot, signature: ctx.signature, ...ancientNote() });
     continue;
   }
   // cash that moved WITH the trade's own direction (a same-sign hop, e.g. a

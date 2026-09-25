@@ -69,6 +69,14 @@ async function precomputeFeatured() {
   if (precomputeBusy) return console.error("[stockbasis] precompute round still running, skipping tick");
   precomputeBusy = true;
   try {
+    // revalidate featured.json before working (SB24): the wrong-shape branch
+    // below armed this very schedule after clearing the load retry, so the
+    // rounds are the only remaining clock that can notice the file coming
+    // back — without this, a hand-fixed file would leave featuredAddresses
+    // empty forever while the /api/featured strip (which re-reads per
+    // request) already lists the wallets again. It runs before the loop, so
+    // the round that notices the recovery is the one that picks the list up.
+    await loadFeatured();
     const fresh = new Map();
     console.error(`[stockbasis] precompute round start: ${featuredAddresses.length} wallets`);
     for (const address of featuredAddresses) {
@@ -104,33 +112,86 @@ async function precomputeFeatured() {
   }
 }
 
+// the hourly precompute arms exactly once — whether featured.json read on the
+// first try or only after the retry loop below — so a late-mounting volume can
+// never stack extra schedules or rounds on top of the first one
+let precomputeArmed = false;
+function armPrecompute() {
+  if (precomputeArmed) return;
+  precomputeArmed = true;
+  precomputeFeatured();
+  // hourly deep scans of every featured wallet can push a public RPC bucket
+  // into a permanent 429 storm: the rounds then crawl inside backoff sleeps,
+  // burn their whole budget and cache nothing — silently. PRECOMPUTE_INTERVAL_MIN
+  // spaces rounds far enough apart for unmetered mirrors to cool down.
+  const intervalMin = Number(process.env.PRECOMPUTE_INTERVAL_MIN) > 0 ? Number(process.env.PRECOMPUTE_INTERVAL_MIN) : 60;
+  setInterval(precomputeFeatured, intervalMin * 60 * 1000).unref();
+}
+
+// a failed featured load retries instead of staying empty until a restart;
+// the cadence is env-tunable so tests can watch a late file get picked up
+const FEATURED_RELOAD_MS = envInt(process.env.FEATURED_RELOAD_MS, 60 * 1000);
+let featuredReload = null;
+
+// tracks "the last read saw a wrong-shaped file": the loud flag below must
+// fire once per ok->bad transition (the shape branch runs again on every
+// precompute-round revalidation, and re-flagging it each round would be the
+// very spam round 70 removed), and the recovery gets its own one-line
+// announcement when a fixed file is picked back up
+let featuredShapeBad = false;
+
 async function loadFeatured() {
+  let entries;
   try {
-    const entries = JSON.parse(await readFile(path.join(dataDir, "featured.json"), "utf8"));
-    // validate up front and say WHICH entry is broken: one malformed record
-    // must skip itself, not poison the whole hourly precompute round
-    featuredAddresses = [];
-    for (const f of entries ?? []) {
-      if (typeof f?.address !== "string" || !ADDRESS_RE.test(f.address)) {
-        console.error(`[stockbasis] featured entry rejected (bad address): ${JSON.stringify(f)?.slice(0, 80)}`);
-        continue;
-      }
-      featuredAddresses.push(f.address);
-    }
-    precomputeFeatured();
-    // hourly deep scans of every featured wallet can push a public RPC bucket
-    // into a permanent 429 storm: the rounds then crawl inside backoff sleeps,
-    // burn their whole budget and cache nothing — silently. PRECOMPUTE_INTERVAL_MIN
-    // spaces rounds far enough apart for unmetered mirrors to cool down.
-    const intervalMin = Number(process.env.PRECOMPUTE_INTERVAL_MIN) > 0 ? Number(process.env.PRECOMPUTE_INTERVAL_MIN) : 60;
-    setInterval(precomputeFeatured, intervalMin * 60 * 1000).unref();
+    entries = JSON.parse(await readFile(path.join(dataDir, "featured.json"), "utf8"));
   } catch (e) {
     // a silent catch here reads as "no featured wallets" forever: the strip
     // keeps serving (it re-reads the file per request) while every hourly
-    // precompute round quietly iterates an empty list
+    // precompute round quietly iterates an empty list. A volume that mounts
+    // after the process must not need a restart either — the retry timer keeps
+    // a missing/unreadable file on a working schedule (round 69 semantics).
     console.error(`[stockbasis] featured load failed: ${String(e?.message ?? e).slice(0, 120)}`);
     featuredAddresses = [];
+    featuredReload ??= setInterval(loadFeatured, FEATURED_RELOAD_MS);
+    featuredReload.unref();
+    return;
   }
+  // same shape gate as the /api/featured strip below: a dict-shaped file (a
+  // hand-edit, an error envelope copied over the volume) parses fine but is
+  // not iterable as a list. A string would "load" as N per-character junk
+  // entries, an object would TypeError into the retry loop — so it gets no
+  // retry timer, but unlike a missing volume it also cannot clear itself:
+  // the flag fires ONCE per ok->bad transition and every precompute round
+  // revalidates the file (SB24), so an operator fixing it self-heals without
+  // a restart — same as the strip, which re-reads the file per request.
+  if (!Array.isArray(entries)) {
+    if (!featuredShapeBad) {
+      featuredShapeBad = true;
+      console.error(`[stockbasis] featured.json holds ${entries === null ? "null" : typeof entries}, not a list — featured precompute runs empty until the file is fixed (rechecked every precompute round)`);
+    }
+    featuredAddresses = [];
+    if (featuredReload) { clearInterval(featuredReload); featuredReload = null; }
+    armPrecompute();
+    return;
+  }
+  // validate up front and say WHICH entry is broken: one malformed record
+  // must skip itself, not poison the whole hourly precompute round
+  featuredAddresses = [];
+  for (const f of entries) {
+    if (typeof f?.address !== "string" || !ADDRESS_RE.test(f.address)) {
+      console.error(`[stockbasis] featured entry rejected (bad address): ${JSON.stringify(f)?.slice(0, 80)}`);
+      continue;
+    }
+    featuredAddresses.push(f.address);
+  }
+  if (featuredReload) { clearInterval(featuredReload); featuredReload = null; }
+  // recovery is a state transition, not a routine success: one line, once,
+  // only when a previously wrong-shaped file came back as a list
+  if (featuredShapeBad) {
+    featuredShapeBad = false;
+    console.error("[stockbasis] featured.json recovered — featured list and precompute leg are live again");
+  }
+  armPrecompute();
 }
 
 function startJob(address) {
@@ -206,8 +267,15 @@ const server = http.createServer(async (req, res) => {
         if (body.length > 1024) {
           clearTimeout(bodyTimer);
           aborted = true;
+          // answer FIRST, kill the socket only after the error actually
+          // flushed: destroy() straight after end() races the kernel and the
+          // client used to see ECONNRESET instead of this 413. The finish
+          // hook drops the connection once the response is on the wire; an
+          // unconsumed body makes Node close it right after the response
+          // anyway, and the paused request stream applies TCP backpressure
+          // to anything the client is still sending.
           const out = json(res, 413, { error: "payload too large" });
-          req.destroy(); // then stop the stream
+          res.on("finish", () => { try { req.destroy(); } catch {} });
           return out;
         }
       }
@@ -227,7 +295,10 @@ const server = http.createServer(async (req, res) => {
     if (!ctype.toLowerCase().startsWith("application/json")) return json(res, 415, { error: "application/json required" });
     let address;
     try { address = JSON.parse(body).address; } catch { /* handled below */ }
-    if (!ADDRESS_RE.test(address ?? "")) return json(res, 400, { error: "valid Solana address required" });
+    // typeof first: ADDRESS_RE.test coerces its argument, so an array joined
+    // itself into a "valid" string and an object with toString:null threw a
+    // TypeError that destroyed the socket with no HTTP answer at all
+    if (typeof address !== "string" || !ADDRESS_RE.test(address)) return json(res, 400, { error: "valid Solana address required" });
     const runningNow = [...jobs.values()].filter((j) => j.status === "running").length;
     if (runningNow >= 20) return json(res, 503, { error: "server busy, try again shortly" });
     evictFinishedJobs();

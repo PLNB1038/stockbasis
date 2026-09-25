@@ -60,11 +60,23 @@ $("scan").addEventListener("submit", async (e) => {
   lastAddress = address;
   $("go").disabled = true;
   show("progress"); hide("error"); hide("report"); hide("assume-opt");
+  // stale numbers read as the new wallet's progress: until the first poll
+  // answers, the line and bar must be empty, not the previous scan's tail
+  $("progress-text").textContent = "";
+  $("bar-fill").style.width = "0%";
 
   try {
     const res = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }), signal: AbortSignal.timeout(REQ_TIMEOUT_MS) });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    // the status check comes before any parsing: a 502 HTML page from a proxy
+    // answered res.json() with a raw "SyntaxError: Unexpected token '<'" — the
+    // poll loop checks res.ok first, the submit must talk to the user the same way
+    if (!res.ok) {
+      let msg = `Server error — please try again (HTTP ${res.status})`;
+      try { msg = (await res.json()).error ?? msg; } catch { /* the friendly line stays */ }
+      throw new Error(msg);
+    }
+    let body;
+    try { body = await res.json(); } catch { throw new Error("Server error — please try again."); }
     await poll(body.id, seq);
   } catch (err) {
     if (seq === pollSeq) showError(String(err.message ?? err));
@@ -154,7 +166,21 @@ function render(job) {
   const notes = [];
   if (unknownBasis > 0 && !showAssumed) notes.push(`${unknownBasis} disposal${unknownBasis > 1 ? "s" : ""} with unknown cost basis (bought before the scanned history, or deposited from custody) listed with n/a basis and excluded from P&L — tick the box above to assume market price for recent disposals (a current quote says nothing about an old sale's basis).`);
   if ((job.result.priceCorrections ?? 0) > 0) notes.push(`${job.result.priceCorrections} recent trade${job.result.priceCorrections > 1 ? "s" : ""} valued at market price (cash leg ambiguous in an aggregated route).`);
-  if ((job.result.partialCash ?? 0) > 0) notes.push(`${job.result.partialCash} trade${job.result.partialCash > 1 ? "s" : ""} valued on the stablecoin leg only — the SOL price was unavailable at scan time, so their proceeds and P&L are understated (the unpriced SOL side is recorded as a movement).`);
+  if ((job.result.partialCash ?? 0) > 0) {
+    // the same counter covers ancient legs, where the SOL price is not
+    // "unavailable at scan time" but permanently outside CoinGecko's 365-day
+    // public window: there a rescan can never help, and the note must not
+    // promise one — so the two causes get different wordings
+    const pc = job.result.partialCash;
+    if ((job.result.partialCashAncient ?? 0) > 0) {
+      notes.push(`${pc} trade${pc > 1 ? "s" : ""} priced partially: the SOL price is outside the 365-day price window (cannot be recovered by rescanning), so proceeds and P&L are understated.`);
+    } else {
+      notes.push(`${pc} trade${pc > 1 ? "s" : ""} valued on the stablecoin leg only — the SOL price was unavailable at scan time, so their proceeds and P&L are understated (the unpriced SOL side is recorded as a movement).`);
+    }
+  }
+  // fully unpriced movements (an ancient day): lots were consumed with no
+  // proceeds and no P&L — the hole must not be silent
+  if ((job.result.unpricedMovements ?? 0) > 0) notes.push(`${job.result.unpricedMovements} movement${job.result.unpricedMovements > 1 ? "s" : ""} unpriced (outside the price window) — realized P&L may be incomplete; the shares still moved through the inventory.`);
   if ((job.result.ambiguous ?? 0) > 0) notes.push(`${job.result.ambiguous} older trade${job.result.ambiguous > 1 ? "s" : ""} excluded from P&L as ambiguous (aggregated route, no reliable historical price — the shares still left the inventory).`);
   if ((job.result.reconciled ?? 0) > 0) notes.push(`${job.result.reconciled} position${job.result.reconciled > 1 ? "s" : ""} from the scanned window reconciled to on-chain balances (some movements were not retrievable from public RPC).`);
   if ((job.result.reconcileFailed ?? 0) > 0) notes.push(`On-chain balance unavailable for ${job.result.reconcileFailed} token${job.result.reconcileFailed > 1 ? "s" : ""} — those positions are shown as scanned.`);
@@ -251,7 +277,9 @@ const csvSafe = (s) => {
 // birthday in every artifact
 const day = (ts) => new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit", timeZone: "UTC" });
 const dates = (r) => (r.firstTs ? `${day(r.firstTs)} → ${day(r.lastTs)}` : "");
-const esc = (s) => String(s ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+// ' is covered too: today the output only lands in double-quoted attributes,
+// but a future single-quoted one must not turn an escape into an attribute break
+const esc = (s) => String(s ?? "").replace(/[<>&"']/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&#39;" }[c]));
 const show = (id) => ($(id).hidden = false);
 const hide = (id) => ($(id).hidden = true);
 function showError(msg) { hide("progress"); hide("report"); $("error").textContent = msg; show("error"); }

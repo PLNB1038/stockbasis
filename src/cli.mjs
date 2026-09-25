@@ -33,18 +33,26 @@ if (cmd === "scan") {
 }
 
 const { report, reconciled, reconcileFailed } = await buildReconciledReport(address, trades);
-const { rows, disposals, unknownCloses, totalRealized, aggregatedDisposals } = report;
+const { rows, disposals, unknownCloses, totalRealized, aggregatedDisposals, unpricedMovements } = report;
 
 if (cmd === "csv") {
   const file = `stockbasis-${address.slice(0, 8)}.csv`;
   await import("node:fs").then((fs) => fs.writeFileSync(file, toCsv(disposals)));
   console.error(`[stockbasis] wrote ${file} (${disposals.length} disposals${unknownCloses?.length ? `, ${unknownCloses.length} with unknown basis` : ""})`);
 } else {
-  console.table(rows.map(({ mint, ...r }) => ({ symbol: r.symbol, trades: r.trades, realizedUsd: r.realizedUsd, openQty: r.openQty, openCostUsd: r.openCostUsd })));
+  // single-mirror trusted zeros reach the terminal too: the column appears
+  // only when the data carries the flag (reconcile marks those rows)
+  const singleSourceRows = rows.filter((r) => r.singleSource).length;
+  console.table(rows.map(({ mint, singleSource, ...r }) => ({
+    symbol: r.symbol, trades: r.trades, realizedUsd: r.realizedUsd, openQty: r.openQty, openCostUsd: r.openCostUsd,
+    ...(singleSource != null ? { singleSource } : {}),
+  })));
   console.log(`TOTAL realized P&L: ${totalRealized.toFixed(2)} USD across ${rows.length} stock tokens`);
   if (reconciled) console.log(`open positions reconciled to on-chain balances: ${reconciled} token(s) adjusted`);
   if (reconcileFailed) console.log(`on-chain balance unavailable for ${reconcileFailed} token(s) — those positions stay as scanned`);
+  if (singleSourceRows) console.log(`${singleSourceRows} token(s) zeroed on ONE RPC mirror's word (not cross-confirmed) — the row carries singleSource`);
   if (aggregatedDisposals) console.log(`${aggregatedDisposals} disposal(s) inside multi-token aggregator routes — cash cannot be split across legs, proceeds not attributed`);
+  if (unpricedMovements) console.log(`${unpricedMovements} movement(s) unpriced (outside the price window) — realized P&L may be incomplete`);
   if (coverage?.fromTs) {
     const day = (ts) => new Date(ts * 1000).toISOString().slice(0, 10);
     console.log(`history covered: ${day(coverage.fromTs)} → ${day(coverage.toTs)} (${coverage.scanned} txs scanned)`);

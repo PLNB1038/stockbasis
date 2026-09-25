@@ -88,12 +88,31 @@ async function rpcInner(method, params, opts = {}) {
   // lacking old transactions is a per-endpoint data hole, not a chain fact —
   // only when every endpoint says "not found" may the caller treat it as real
   const holes = new Set();
-  // the -32020 rotation gets its OWN budget: sharing the attempt cap with the
-  // 429 backoff let one throttled mirror burn the budget and masquerade as a
-  // confirmed "all mirrors lack this tx" hole, silently truncating history
+  // TWO separate budgets. retries counts honest transient faults (429/5xx, a
+  // broken envelope, a transient RPC error) and alone is capped by
+  // MAX_RETRIES; holeSkips caps the -32020/null-result rotation itself.
+  // attempt once served both, so every hole rotation burned retry budget:
+  // with >=3 mirrors and a partially evicted tx, the rotations alone walked
+  // past MAX_RETRIES and the first real 429 killed the whole call (fetchTx
+  // escalates that to a failed scan) — the throttled mirror never got the
+  // chances the retry budget promised it
+  let retries = 0;
   let holeSkips = 0;
+  // step the shared index to the next mirror that has NOT already holed this
+  // call: re-asking a mirror that answered -32020/null burns a request and a
+  // rotation slot for a guaranteed repeat answer. The skip is safe to loop:
+  // advance() is only reachable while holes.size < urls.length (the hole
+  // branches throw before every mirror is holed), so an unholed mirror always
+  // exists within one lap. The holes set is per-call, so the skip is too —
+  // and the url that answers is still credited via holes.add(url) below,
+  // never via urls[endpointIdx], which a concurrent caller may have rotated
+  // before we read it
+  const advance = () => {
+    endpointIdx++;
+    while (holes.has(urls[endpointIdx % urls.length])) endpointIdx++;
+  };
 
-  for (let attempt = 0; ; attempt++) {
+  for (;;) {
     if (signal?.aborted) throw new Error(`RPC ${method}: aborted`);
     const url = urls[endpointIdx % urls.length];
     // the fetch (and its per-endpoint pacing wait) runs inside that endpoint's
@@ -112,9 +131,10 @@ async function rpcInner(method, params, opts = {}) {
     });
 
     if (res.status === 429 || res.status >= 500) {
-      if (attempt >= MAX_RETRIES) throw new Error(`RPC ${method}: HTTP ${res.status} after ${attempt + 1} attempts`);
-      endpointIdx++; // next attempt tries the next mirror in the list
-      await sleep(2 ** Math.min(attempt, 4) * 750);
+      if (retries >= MAX_RETRIES) throw new Error(`RPC ${method}: HTTP ${res.status} after ${retries + 1} attempts`);
+      await sleep(2 ** Math.min(retries, 4) * 750);
+      retries++; // only real throttled answers spend the retry budget — rotations are free
+      advance(); // next attempt tries the next mirror in the list
       continue;
     }
     if (!res.ok) throw new Error(`RPC ${method}: HTTP ${res.status}`);
@@ -124,21 +144,26 @@ async function rpcInner(method, params, opts = {}) {
     // not an empty success: returning undefined here would read as "no data,
     // all clean" to every caller. Rotate and retry like any transient fault.
     if (body?.result === undefined && body?.error === undefined) {
-      if (attempt >= MAX_RETRIES) throw new Error(`RPC ${method}: HTTP 200 without a JSON-RPC envelope after ${attempt + 1} attempts`);
-      endpointIdx++;
-      await sleep(2 ** Math.min(attempt, 4) * 750);
+      if (retries >= MAX_RETRIES) throw new Error(`RPC ${method}: HTTP 200 without a JSON-RPC envelope after ${retries + 1} attempts`);
+      await sleep(2 ** Math.min(retries, 4) * 750);
+      retries++;
+      advance();
       continue;
     }
     if (body.error) {
       // -32020 "transaction not found": try the remaining mirrors first —
       // the primary usually still serves what a shallow mirror has dropped
       if (body.error.code === -32020) {
-        holes.add(urls[endpointIdx % urls.length]);
+        // credit the hole to the url that actually answered THIS call, never
+        // to urls[endpointIdx] — a concurrent caller rotates the shared index,
+        // and a url read from it may have never been asked about this request
+        holes.add(url);
         // rotate while unvisited mirrors remain, under this branch's own
         // budget (a concurrent caller moves the shared index — the cap only
-        // stops us from circling holed mirrors forever)
+        // stops us from circling holed mirrors forever); these moves are
+        // free — the retry budget above is never touched
         if (holes.size < urls.length && holeSkips++ < urls.length * 3) {
-          endpointIdx++;
+          advance();
           continue;
         }
         if (holes.size < urls.length) {
@@ -152,9 +177,10 @@ async function rpcInner(method, params, opts = {}) {
       // request-class errors are permanent — fail now, not after six retries
       if (PERMANENT_RPC_CODES.has(body.error.code)) throw new RpcError(method, body.error);
       // other RPC-level errors can be transient (node behind a load balancer)
-      if (attempt >= MAX_RETRIES) throw new RpcError(method, body.error);
-      endpointIdx++;
-      await sleep(2 ** Math.min(attempt, 4) * 750);
+      if (retries >= MAX_RETRIES) throw new RpcError(method, body.error);
+      await sleep(2 ** Math.min(retries, 4) * 750);
+      retries++;
+      advance();
       continue;
     }
     // result:null is the official "not found" answer (an evicted transaction
@@ -164,7 +190,7 @@ async function rpcInner(method, params, opts = {}) {
     if (body.result === null) {
       holes.add(url);
       if (holes.size < urls.length && holeSkips++ < urls.length * 3) {
-        endpointIdx++;
+        advance();
         continue;
       }
       if (holes.size < urls.length) {

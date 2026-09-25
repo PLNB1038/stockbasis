@@ -89,7 +89,9 @@ test("a throttled price day is re-asked at most once per TTL window", async () =
   let calls = 0;
   globalThis.fetch = async () => { calls++; throw new TypeError("fetch failed"); };
   try {
-    const ts = 1234567890; // 2009 — no test seeds this day
+    // a recent day inside CoinGecko's 365-day window (an ancient day is answered
+    // locally without any fetch — pinned by round70-ingest); no test seeds this day
+    const ts = Math.floor(Date.now() / 1000) - 10 * 86400;
     const first = await solUsdOn(ts);
     const second = await solUsdOn(ts);
     assert.equal(first, null);

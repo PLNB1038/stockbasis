@@ -5,8 +5,14 @@ import { ingestWallet } from "../src/ingest.mjs";
 import { buildReport } from "../src/report.mjs";
 
 const args = process.argv.slice(2);
-const maxScanTx = Number(args.at(-1)) > 0 ? Number(args.at(-1)) : 400;
-const addresses = Number(args.at(-1)) > 0 ? args.slice(0, -1) : args;
+// a bare numeric tail is the scan cap — but ONLY when it cannot be a base58
+// address: every Solana address is 32+ chars, so 1-10 digits are a limit and
+// an all-digit address (they exist) stays an address. The old Number()>0
+// probe swallowed a digits-only address into the cap: the address list went
+// empty and the script silently did nothing.
+const isLimit = (s) => /^\d{1,10}$/.test(s ?? "");
+const maxScanTx = isLimit(args.at(-1)) ? Number(args.at(-1)) : 400;
+const addresses = isLimit(args.at(-1)) ? args.slice(0, -1) : args;
 
 for (const address of addresses) {
   try {

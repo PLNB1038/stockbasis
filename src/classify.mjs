@@ -27,6 +27,11 @@ const envInt = (v, dflt) => {
   return Number.isFinite(n) ? n : dflt;
 };
 const NULL_TTL_MS = envInt(process.env.CLASSIFY_NULL_TTL_MS, 10 * 60 * 1000);
+// a 200 answer whose tags are still empty is not positive: Jupiter knows the
+// token but has not indexed its tags yet (the same listing lag as no-data).
+// It gets a short TTL of its own so a freshly listed stock surfaces on the
+// next lookup instead of staying invisible until a process restart.
+const TAGLESS_TTL_MS = envInt(process.env.CLASSIFY_TAGLESS_TTL_MS, 30 * 1000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // token metadata is attacker-controllable: strip control characters AND
 // bidi/zero-width format characters at the source — a spoofed symbol must
@@ -36,7 +41,9 @@ const clean = (s) => String(s ?? "").replace(/[\u0000-\u001F\u007F\u200B-\u200F\
 /**
  * Look up token metadata and stock classification for a mint.
  * A "no data" answer is cached only for a short TTL: an index-lagging mirror
- * must not blind the process to a stock for its whole lifetime.
+ * must not blind the process to a stock for its whole lifetime. The same
+ * applies to a tagless answer (token known, tags not indexed yet): it expires
+ * after TAGLESS_TTL_MS so the tag is picked up without a restart.
  * @param {string} mint
  * @param {{signal?: AbortSignal}} [opts]
  * @returns {Promise<{symbol: string, name: string, isStock: boolean, tags: string[]} | null>}
@@ -44,9 +51,14 @@ const clean = (s) => String(s ?? "").replace(/[\u0000-\u001F\u007F\u200B-\u200F\
 export async function lookupToken(mint, { signal } = {}) {
   const hit = cache.get(mint);
   if (hit !== undefined) {
-    if (!hit.isNull) return hit;
-    if (Date.now() < hit.nullUntil) return null;
-    cache.delete(mint); // stale no-data: ask again
+    if (!hit.isNull) {
+      if (hit.unconfirmedUntil === undefined || Date.now() < hit.unconfirmedUntil) return hit;
+      cache.delete(mint); // stale tagless answer: the tags may have arrived — ask again
+    } else if (Date.now() < hit.nullUntil) {
+      return null;
+    } else {
+      cache.delete(mint); // stale no-data: ask again
+    }
   }
 
   if (curated[mint]) {
@@ -75,8 +87,12 @@ export async function lookupToken(mint, { signal } = {}) {
     }
     break;
   }
-  // positive answers are immutable; no-data is only as durable as its TTL
-  cache.set(mint, out ?? { isNull: true, nullUntil: Date.now() + NULL_TTL_MS });
+  // answers that carry tags are immutable; a tagless one is only as durable
+  // as its short TTL (tags may be indexed any moment), and no-data as its own
+  cache.set(mint,
+    out === null ? { isNull: true, nullUntil: Date.now() + NULL_TTL_MS }
+    : out.tags.length === 0 ? { ...out, unconfirmedUntil: Date.now() + TAGLESS_TTL_MS }
+    : out);
   await sleep(250); // free tier QPS is low
   return out;
 }
